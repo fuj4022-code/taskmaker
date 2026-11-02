@@ -1,0 +1,19 @@
+{
+  "name": "taskly",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node server.mjs",
+    "start": "node server.mjs",
+    "test": "node --test test/taskly-model.test.mjs",
+    "check": "node --check src/app.js && node --check src/model.js && node --check src/sync.js && node --check src/storage.js",
+    "test:e2e": "playwright test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1"
+  }
+}

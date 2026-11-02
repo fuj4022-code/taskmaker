@@ -1,0 +1,19 @@
+{
+  "id": "/",
+  "name": "Taskly タスク管理",
+  "short_name": "Taskly",
+  "lang": "ja",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f8f9fb",
+  "theme_color": "#397e68",
+  "icons": [
+    {
+      "src": "/public/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
