@@ -1,10 +1,12 @@
 import { defineConfig } from "@playwright/test";
+const port = Number(process.env.TASKLY_TEST_PORT || 5187);
+const baseURL = `http://127.0.0.1:${port}`;
 export default defineConfig({
   testDir: "./test",
   testMatch: "taskly.spec.js",
   fullyParallel: true,
   use: {
-    baseURL: "http://127.0.0.1:5173",
+    baseURL,
     headless: true,
     launchOptions: {
       executablePath: process.env.CHROMIUM_PATH || "/usr/bin/chromium",
@@ -13,8 +15,9 @@ export default defineConfig({
   },
   webServer: {
     command: "npm run dev",
-    url: "http://127.0.0.1:5173",
-    reuseExistingServer: !process.env.CI,
+    url: baseURL,
+    env: { PORT: String(port) },
+    reuseExistingServer: false,
   },
   projects: [
     { name: "desktop", use: { viewport: { width: 1440, height: 1000 } } },

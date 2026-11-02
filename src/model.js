@@ -3,6 +3,31 @@ export const STATUSES = [
   { id: "doing", label: "進行中", color: "#d7a447" },
   { id: "done", label: "完了", color: "#499484" },
 ];
+export const PROGRESS = [
+  { id: "ontrack", label: "順調" },
+  { id: "behind", label: "遅れ気味" },
+  { id: "ahead", label: "先行" },
+];
+export const defaultColumns = () =>
+  STATUSES.map((s) => ({ id: s.id, label: s.label, updatedAt: 0 }));
+export function columns(state) {
+  return state.columns || defaultColumns();
+}
+// Optional fields keep schema 2 documents and existing Supabase tables compatible.
+export function normalize(state) {
+  if (!validState(state)) throw Error("データ形式が正しくありません。");
+  const next = structuredClone(state);
+  next.columns = columns(next);
+  for (const t of next.tasks) {
+    t.progress ??= "ontrack";
+    t.archived ??= false;
+    for (const c of t.checklist) {
+      c.start ??= "";
+      c.due ??= "";
+    }
+  }
+  return next;
+}
 export const COLORS = ["#4d8b78", "#657bb5", "#b382a8", "#cb9562", "#7e85ae"];
 export const uid = () => crypto.randomUUID();
 export function dateKey(date = new Date()) {
@@ -111,6 +136,7 @@ export function initialState() {
   return {
     schema: 2,
     projects,
+    columns: defaultColumns(),
     tasks: samples.map(
       (
         [title, status, start, due, tags, items, checked, description],
@@ -128,16 +154,59 @@ export function initialState() {
           id: "check-demo-" + sampleIndex + "-" + i,
           text,
           done: i < checked,
+          start: "",
+          due: "",
         })),
         images: [],
         createdAt: now,
         updatedAt: now,
         deleted: false,
+        archived: false,
+        progress: "ontrack",
       }),
     ),
   };
 }
-export const activeTasks = (s) => s.tasks.filter((t) => !t.deleted);
+export const activeTasks = (s, { includeArchived = false } = {}) =>
+  s.tasks.filter((t) => !t.deleted && (includeArchived || !t.archived));
+export function dateRangeValid(start, due) {
+  return isDate(start) && isDate(due) && (!start || !due || start <= due);
+}
+export function resizeRange(start, due, edge, delta) {
+  if (
+    !dateRangeValid(start, due) ||
+    (!start && !due) ||
+    !["start", "due"].includes(edge) ||
+    !Number.isInteger(delta)
+  )
+    throw Error("期間が正しくありません。");
+  const first = start || due,
+    last = due || start;
+  const result =
+    edge === "start"
+      ? {
+          start: addDays(first, Math.min(delta, dayDiff(first, last))),
+          due: last,
+        }
+      : {
+          start: first,
+          due: addDays(last, Math.max(delta, -dayDiff(first, last))),
+        };
+  if (!dateRangeValid(result.start, result.due))
+    throw Error("設定できる日付の範囲を超えています。");
+  return result;
+}
+export function calendarDays(month) {
+  const first = month.slice(0, 7) + "-01";
+  const offset = (new Date(first + "T12:00:00").getDay() + 6) % 7;
+  return Array.from({ length: 42 }, (_, i) => addDays(first, i - offset));
+}
+export function occursOn(item, day) {
+  const start = item.start || item.due,
+    end = item.due || item.start;
+  return Boolean(start && start <= day && day <= end);
+}
+
 const isDate = (s) =>
   s === "" ||
   (typeof s === "string" &&
@@ -157,10 +226,26 @@ export function validState(s) {
     s.projects.length > 200
   )
     return false;
+  if (
+    s.columns !== undefined &&
+    (!Array.isArray(s.columns) ||
+      s.columns.length !== 3 ||
+      new Set(s.columns.map((c) => c?.id)).size !== 3 ||
+      !s.columns.every(
+        (c) =>
+          c &&
+          STATUSES.some((x) => x.id === c.id) &&
+          str(c.label, 30) &&
+          c.label.trim() &&
+          Number.isFinite(c.updatedAt),
+      ))
+  )
+    return false;
   const projectIds = new Set(),
     taskIds = new Set();
   for (const p of s.projects) {
     if (
+      !p ||
       !validId(p.id) ||
       projectIds.has(p.id) ||
       !str(p.name, 100) ||
@@ -173,6 +258,7 @@ export function validState(s) {
   }
   for (const t of s.tasks) {
     if (
+      !t ||
       !validId(t.id) ||
       taskIds.has(t.id) ||
       !projectIds.has(t.projectId) ||
@@ -180,9 +266,12 @@ export function validState(s) {
       !t.title.trim() ||
       !STATUSES.some((x) => x.id === t.status) ||
       !str(t.description, 20000) ||
-      !isDate(t.start) ||
-      !isDate(t.due) ||
-      (t.start && t.due && t.start > t.due) ||
+      !dateRangeValid(t.start, t.due) ||
+      (t.progress !== undefined &&
+        !PROGRESS.some((p) => p.id === t.progress)) ||
+      (t.archived !== undefined &&
+        (typeof t.archived !== "boolean" ||
+          (t.archived && t.status !== "done"))) ||
       !Number.isFinite(t.updatedAt) ||
       !Number.isFinite(t.createdAt) ||
       typeof t.deleted !== "boolean" ||
@@ -193,7 +282,11 @@ export function validState(s) {
       t.checklist.length > 100 ||
       !t.checklist.every(
         (x) =>
-          x && validId(x.id) && str(x.text, 300) && typeof x.done === "boolean",
+          x &&
+          validId(x.id) &&
+          str(x.text, 300) &&
+          typeof x.done === "boolean" &&
+          dateRangeValid(x.start ?? "", x.due ?? ""),
       ) ||
       !Array.isArray(t.images) ||
       t.images.length > 8 ||
@@ -229,8 +322,11 @@ export function merge(a, b) {
     }
     return [...m.values()];
   };
+  a = normalize(a);
+  b = normalize(b);
   const result = {
     schema: 2,
+    columns: combine(a.columns, b.columns),
     projects: combine(a.projects, b.projects),
     tasks: combine(a.tasks, b.tasks),
   };
@@ -253,5 +349,7 @@ export function newTask(projectId) {
     createdAt: now,
     updatedAt: now,
     deleted: false,
+    archived: false,
+    progress: "ontrack",
   };
 }

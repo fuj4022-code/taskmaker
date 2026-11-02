@@ -1,4 +1,4 @@
-import { validState, initialState } from "./model.js";
+import { validState, initialState, normalize } from "./model.js";
 let db;
 function open() {
   return new Promise((resolve, reject) => {
@@ -20,7 +20,9 @@ export async function load() {
   });
   if (state) {
     if (!validState(state)) throw Error("保存データを読み込めません。");
-    return state;
+    const normalized = normalize(state);
+    await save(normalized);
+    return normalized;
   }
   const seed = initialState();
   await save(seed);
