@@ -183,3 +183,67 @@ test("calendar uses Monday-start 42-day grids and includes all days of a task ra
     false,
   );
 });
+
+test("multi-month windows include complete months and Monday-based weeks", async () => {
+  const { ganttWindow } = await import("../src/schedule.js");
+  const daily = ganttWindow("2026-11-05", 3, "day");
+  assert.equal(daily.start, "2026-11-01");
+  assert.equal(daily.end, "2027-01-31");
+  assert.equal(daily.dayCount, 92);
+  const weekly = ganttWindow("2026-11-05", 3, "week");
+  assert.equal(weekly.start, "2026-10-26");
+  assert.equal(weekly.end, "2027-01-31");
+  assert.equal(weekly.columns.length, 14);
+  assert.equal(weekly.daysPerColumn, 7);
+  assert.equal(ganttWindow("2028-02-01", 1, "day").dayCount, 29);
+  assert.equal(ganttWindow("2026-11-01", 6, "day").end, "2027-04-30");
+});
+test("weekly geometry keeps day-level positions and clips long task ranges", async () => {
+  const { ganttWindow, ganttBar } = await import("../src/schedule.js");
+  const w = ganttWindow("2026-11-01", 3, "week");
+  const bar = ganttBar("2026-11-02", "2026-11-15", w, 84);
+  assert.equal(bar.left, 86);
+  assert.equal(bar.width, 164);
+  assert.ok(bar.visible);
+  const clipped = ganttBar("2026-01-01", "2027-12-01", w, 84);
+  assert.equal(clipped.hasStart, false);
+  assert.equal(clipped.hasEnd, false);
+  assert.equal(clipped.width, w.columns.length * 84 - 4);
+  assert.equal(ganttBar("2027-02-01", "2027-02-02", w, 84).visible, false);
+});
+test("deadline highlighting uses inclusive three-day threshold and excludes completed tasks", async () => {
+  const { deadlineState, deadlineLabel } = await import("../src/schedule.js");
+  const t = { status: "todo", due: "2026-11-08" };
+  assert.equal(deadlineState(t, "2026-11-05"), "soon");
+  assert.equal(deadlineState(t, "2026-11-04"), "");
+  assert.equal(deadlineState(t, "2026-11-09"), "overdue");
+  assert.equal(deadlineState({ ...t, status: "done" }, "2026-11-09"), "");
+  assert.equal(deadlineState({ ...t, archived: true }, "2026-11-09"), "");
+  assert.equal(deadlineLabel(t, "2026-11-08"), "今日が期限");
+  assert.equal(deadlineState({ ...t, due: "" }, "2026-11-05"), "");
+});
+test("calendar packs overlapping ranges into separate lanes with week continuations", async () => {
+  const { calendarWeeks } = await import("../src/schedule.js");
+  const tasks = [
+    { id: "a", start: "2026-11-02", due: "2026-11-05" },
+    { id: "b", start: "2026-11-04", due: "2026-11-10" },
+    { id: "c", start: "", due: "2026-11-06" },
+    { id: "none", start: "", due: "" },
+  ];
+  const weeks = calendarWeeks(tasks, "2026-11-01"),
+    first = weeks.find((w) => w.days[0] === "2026-11-02"),
+    second = weeks.find((w) => w.days[0] === "2026-11-09");
+  assert.equal(first.segments.length, 3);
+  assert.equal(first.segments.find((s) => s.task.id === "a").span, 4);
+  assert.notEqual(
+    first.segments.find((s) => s.task.id === "a").lane,
+    first.segments.find((s) => s.task.id === "b").lane,
+  );
+  assert.equal(
+    first.segments.find((s) => s.task.id === "c").lane,
+    first.segments.find((s) => s.task.id === "a").lane,
+  );
+  assert.equal(first.segments.find((s) => s.task.id === "b").after, true);
+  assert.equal(second.segments.find((s) => s.task.id === "b").before, true);
+  assert.equal(second.segments.find((s) => s.task.id === "b").span, 2);
+});

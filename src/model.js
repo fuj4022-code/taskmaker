@@ -18,6 +18,14 @@ export function normalize(state) {
   if (!validState(state)) throw Error("データ形式が正しくありません。");
   const next = structuredClone(state);
   next.columns = columns(next);
+  // Legacy project metadata remains only to keep old backups and cloud documents compatible.
+  if (!next.projects.length)
+    next.projects.push({
+      id: "taskly-workspace",
+      name: "Taskly",
+      color: "#374151",
+      updatedAt: 0,
+    });
   for (const t of next.tasks) {
     t.progress ??= "ontrack";
     t.archived ??= false;

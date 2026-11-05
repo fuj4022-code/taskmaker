@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { initialState, normalize, addDays, dateKey } from "../src/model.js";
+import { ganttWindow } from "../src/schedule.js";
 async function start(page) {
   await page.goto("/");
   await expect(
@@ -97,7 +98,7 @@ test("gantt shares dates and task edits with kanban, filters and navigates", asy
   await page.getByLabel("開始日", { exact: true }).fill(today);
   await page.getByLabel("期限日", { exact: true }).fill(today);
   await page.getByRole("button", { name: "タスクを作成", exact: true }).click();
-  await page.getByRole("tab", { name: "ガントチャート" }).click();
+  await openGantt(page);
   const bar = page.locator(".gantt-bar").filter({ hasText: "ガントの予定" });
   await expect(bar).toBeVisible();
   await bar.click();
@@ -134,21 +135,36 @@ test("date validation keeps draft and does not partially save", async ({
   await page.getByRole("button", { name: "タスクを作成", exact: true }).click();
   await expect(page.getByRole("heading", { name: "日付の検証" })).toBeVisible();
 });
-test("project creation and tag filtering", async ({ page }, info) => {
+test("tasks from every former project remain visible and tags filter the unified list", async ({
+  page,
+}) => {
+  const legacy = initialState();
+  legacy.tasks = legacy.tasks.slice(0, 2);
+  legacy.tasks[0].title = "以前の分類A";
+  legacy.tasks[1].title = "以前の分類B";
+  legacy.tasks[1].projectId = legacy.projects[1].id;
+  await seedState(page, legacy);
   await start(page);
-  if (info.project.name === "mobile")
-    await page.getByRole("button", { name: "メニュー", exact: true }).click();
-  await page
-    .getByRole("button", { name: "新しいプロジェクト", exact: true })
-    .click();
-  await page.getByLabel("プロジェクト名", { exact: true }).fill("旅行の計画");
-  await page.getByRole("button", { name: "作成する", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "以前の分類A", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "以前の分類B", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "新しいプロジェクト", exact: true }),
+  ).toHaveCount(0);
   await create(page, "宿泊を予約");
+  await expect(page.locator("#task-project")).toHaveCount(0);
   await page.getByPlaceholder("タグを入力して Enter").fill("旅行");
   await page.getByRole("button", { name: "タスクを作成", exact: true }).click();
-  await expect(page.locator(".task-card")).toHaveCount(1);
+  await expect(page.locator(".task-card")).toHaveCount(3);
   await page.getByRole("button", { name: "旅行", exact: true }).click();
   await expect(page.locator(".task-card")).toHaveCount(1);
+  await page.getByRole("button", { name: "すべて", exact: true }).click();
+  await expect(page.locator(".task-card")).toHaveCount(3);
+  await page.reload();
+  await expect(page.locator(".task-card")).toHaveCount(3);
 });
 test("image attachment persists offline and app reopens from cache", async ({
   page,
@@ -232,7 +248,7 @@ test("viewport has no horizontal overflow, board and gantt scroll internally", a
     path: `/tmp/taskly-${test.info().project.name}.png`,
     fullPage: true,
   });
-  await page.getByRole("tab", { name: "ガントチャート" }).click();
+  await openGantt(page);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth,
@@ -531,15 +547,15 @@ test("checklist dates validate, persist and appear in the Gantt with progress", 
   ).toHaveValue(dateKey());
   await expect(page.locator("#task-progress")).toHaveValue("behind");
   await page.getByRole("button", { name: "閉じる", exact: true }).click();
-  await page.getByRole("tab", { name: "ガントチャート" }).click();
+  await openGantt(page);
   await expect(
     page.locator(".gantt-bar").filter({ hasText: "資料づくり" }),
   ).toBeVisible();
 });
 
-test("rename column titles and project title without changing status semantics", async ({
+test("column renaming persists without changing status semantics", async ({
   page,
-}, info) => {
+}) => {
   await start(page);
   await page
     .getByRole("button", { name: "未着手の列名を変更", exact: true })
@@ -564,16 +580,7 @@ test("rename column titles and project title without changing status semantics",
   await expect(page.locator('[data-column="doing"]')).toContainText(
     "名前を変えても状態は共通",
   );
-  if (info.project.name === "mobile") await menu(page);
-  await page.getByRole("button", { name: /^Webサイトリニューアル / }).click();
-  await page.getByRole("button", { name: "プロジェクト名を変更" }).click();
-  await page.getByLabel("プロジェクト名", { exact: true }).fill("新しい計画");
-  await page.getByRole("button", { name: "名前を保存" }).click();
-  await expect(
-    page.getByRole("heading", { name: "新しい計画", exact: true }),
-  ).toBeVisible();
 });
-
 test("Gantt edges resize with mouse or touch and persist both dates", async ({
   page,
   context,
@@ -581,8 +588,8 @@ test("Gantt edges resize with mouse or touch and persist both dates", async ({
   await start(page);
   const title = "帯を動かす",
     id = await datedTask(page, title);
-  await page.getByRole("tab", { name: "ガントチャート" }).click();
-  await page.locator(".gantt-scroll").evaluate((el) => (el.scrollLeft = 150));
+  await openGantt(page);
+  await panToTask(page, id);
   async function drag(edge, delta) {
     const handle = page.locator(
       `[data-resize-task="${id}"][data-resize="${edge}"]`,
@@ -644,9 +651,9 @@ test("Gantt day width persists and checklist handles support keyboard clamping",
   await expect(
     page.getByRole("heading", { name: "チェックの帯" }),
   ).toBeVisible();
-  await page.getByRole("tab", { name: "ガントチャート" }).click();
-  await page.getByLabel("ガントの1日の幅", { exact: true }).focus();
-  await page.getByLabel("ガントの1日の幅", { exact: true }).press("End");
+  await openGantt(page);
+  await page.getByLabel("ガントの列幅", { exact: true }).focus();
+  await page.getByLabel("ガントの列幅", { exact: true }).press("End");
   await expect(page.locator("#day-width-value")).toHaveText("80px");
   expect(
     await page
@@ -675,30 +682,24 @@ test("Gantt day width persists and checklist handles support keyboard clamping",
     page.locator(".gantt-bar").filter({ hasText: "小項目" }),
   ).toHaveAttribute("data-end", addDays(dateKey(), 1));
   await page.reload();
-  await page.getByRole("tab", { name: "ガントチャート" }).click();
+  await openGantt(page);
   await expect(page.locator("#day-width-value")).toHaveText("80px");
 });
 
-test("month calendar shows multi-day tasks and creates tasks on a selected date", async ({
+test("month calendar uses one bar per weekly range and creates tasks on a selected date", async ({
   page,
 }) => {
   await start(page);
-  await datedTask(page, "カレンダーの予定");
+  const id = await datedTask(page, "カレンダーの予定");
   await page.getByRole("tab", { name: "カレンダー", exact: true }).click();
-  await expect(
-    page
-      .locator(`[data-day="${dateKey()}"] .calendar-event`)
-      .filter({ hasText: "カレンダーの予定" }),
-  ).toBeVisible();
-  await expect(
-    page
-      .locator(`[data-day="${addDays(dateKey(), 1)}"] .calendar-event`)
-      .filter({ hasText: "カレンダーの予定" }),
-  ).toBeVisible();
-  await page
-    .locator(`[data-day="${dateKey()}"] .calendar-event`)
-    .filter({ hasText: "カレンダーの予定" })
-    .click();
+  const events = page.locator(`[data-calendar-task="${id}"]`);
+  const sunday = new Date(dateKey() + "T12:00:00").getDay() === 0;
+  await expect(events).toHaveCount(sunday ? 2 : 1);
+  if (!sunday)
+    expect(
+      await events.first().evaluate((el) => el.style.gridColumn),
+    ).toContain("span 2");
+  await events.first().click();
   await expect(page.locator("#task-title")).toHaveValue("カレンダーの予定");
   await page.getByRole("button", { name: "閉じる", exact: true }).click();
   const date = addDays(dateKey(), 3);
@@ -710,15 +711,13 @@ test("month calendar shows multi-day tasks and creates tasks on a selected date"
   await page.locator("#task-title").fill("この日の予定");
   await page.getByRole("button", { name: "タスクを作成", exact: true }).click();
   await expect(
-    page
-      .locator(`[data-day="${date}"] .calendar-event`)
-      .filter({ hasText: "この日の予定" }),
+    page.locator(".calendar-event").filter({ hasText: "この日の予定" }),
   ).toBeVisible();
+  const heading = await page.locator(".calendar-toolbar h2").textContent();
   await page.screenshot({
-    path: `/tmp/taskly-calendar-${test.info().project.name}.png`,
+    path: `/tmp/taskly-smart-calendar-${test.info().project.name}.png`,
     fullPage: true,
   });
-  const heading = await page.locator(".calendar-toolbar h2").textContent();
   await page.getByRole("button", { name: "次の月", exact: true }).click();
   await expect(page.locator(".calendar-toolbar h2")).not.toHaveText(heading);
   await page.getByRole("button", { name: "今日", exact: true }).click();
@@ -729,7 +728,6 @@ test("month calendar shows multi-day tasks and creates tasks on a selected date"
     ),
   ).toBe(true);
 });
-
 test("completed tasks archive and restore with dates preserved", async ({
   page,
 }, info) => {
@@ -846,8 +844,8 @@ test("canceling a Gantt drag leaves stored dates unchanged", async ({
 }) => {
   await start(page);
   const id = await datedTask(page, "キャンセルする帯");
-  await page.getByRole("tab", { name: "ガントチャート" }).click();
-  await page.locator(".gantt-scroll").evaluate((el) => (el.scrollLeft = 150));
+  await openGantt(page);
+  await panToTask(page, id);
   const h = page.locator(`[data-resize-task="${id}"][data-resize="due"]`),
     b = await h.boundingBox();
   await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
@@ -862,4 +860,259 @@ test("canceling a Gantt drag leaves stored dates unchanged", async ({
   await page.reload();
   await open(page, "キャンセルする帯");
   await expect(page.locator("#task-due")).toHaveValue(addDays(dateKey(), 1));
+});
+
+async function openGantt(page) {
+  await page.getByRole("tab", { name: "ガントチャート", exact: true }).click();
+  await page
+    .getByLabel("ガントの表示単位", { exact: true })
+    .selectOption("day");
+}
+async function panToTask(page, id) {
+  await page.locator(".gantt-scroll").evaluate((el, id) => {
+    const bar = el.querySelector(`[data-bar-task="${id}"]`);
+    el.scrollLeft = Math.max(0, bar.offsetLeft - 20);
+  }, id);
+}
+async function seedState(page, data) {
+  await page.addInitScript(async (data) => {
+    if (localStorage.getItem("fixture-seeded")) return;
+    await new Promise((resolve, reject) => {
+      const q = indexedDB.open("taskly-data", 1);
+      q.onupgradeneeded = () => q.result.createObjectStore("documents");
+      q.onsuccess = () => {
+        const tx = q.result.transaction("documents", "readwrite");
+        tx.objectStore("documents").put(data, "workspace");
+        tx.oncomplete = () => {
+          localStorage.setItem("fixture-seeded", "1");
+          q.result.close();
+          resolve();
+        };
+      };
+      q.onerror = () => reject(q.error);
+    });
+  }, data);
+}
+
+test("Gantt displays several months by week with compact rows and persistent controls", async ({
+  page,
+}) => {
+  await start(page);
+  await page.getByRole("tab", { name: "ガントチャート", exact: true }).click();
+  await expect(
+    page.getByLabel("ガントの表示単位", { exact: true }),
+  ).toHaveValue("week");
+  await expect(
+    page.getByLabel("ガントの表示期間", { exact: true }),
+  ).toHaveValue("3");
+  await expect(page.locator(".gantt-day")).toHaveCount(
+    ganttWindow(dateKey(), 3, "week").columns.length,
+  );
+  expect(
+    await page
+      .locator(".gantt-row")
+      .first()
+      .evaluate((el) => el.getBoundingClientRect().height),
+  ).toBeLessThanOrEqual(32);
+  await page.getByLabel("ガントの表示期間", { exact: true }).selectOption("6");
+  expect(await page.locator(".gantt-day").count()).toBeGreaterThanOrEqual(26);
+  await page
+    .getByLabel("ガントの表示単位", { exact: true })
+    .selectOption("day");
+  expect(await page.locator(".gantt-day").count()).toBeGreaterThanOrEqual(181);
+  await page.getByLabel("ガントの表示期間", { exact: true }).selectOption("1");
+  expect(await page.locator(".gantt-day").count()).toBeGreaterThanOrEqual(28);
+  await page.reload();
+  await page.getByRole("tab", { name: "ガントチャート", exact: true }).click();
+  await expect(
+    page.getByLabel("ガントの表示期間", { exact: true }),
+  ).toHaveValue("1");
+  await expect(
+    page.getByLabel("ガントの表示単位", { exact: true }),
+  ).toHaveValue("day");
+  await page
+    .getByLabel("ガントの表示単位", { exact: true })
+    .selectOption("week");
+  await page.screenshot({
+    path: `/tmp/taskly-smart-gantt-${test.info().project.name}.png`,
+    fullPage: true,
+  });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+});
+
+test("weekly timeline dragging changes dates at the same scale as its headers", async ({
+  page,
+}) => {
+  await start(page);
+  const id = await datedTask(page, "週の帯");
+  await page.getByRole("tab", { name: "ガントチャート", exact: true }).click();
+  await panToTask(page, id);
+  const handle = page.locator(`[data-resize-task="${id}"][data-resize="due"]`);
+  const b = await handle.boundingBox(),
+    width = await page
+      .locator(".gantt-day")
+      .first()
+      .evaluate((el) => el.getBoundingClientRect().width);
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(b.x + b.width / 2 + width, b.y + b.height / 2, {
+    steps: 5,
+  });
+  await page.mouse.up();
+  await expect(page.locator(`[data-bar-task="${id}"]`)).toHaveAttribute(
+    "data-end",
+    addDays(dateKey(), 8),
+  );
+});
+
+test("deadline colors appear in board, Gantt and calendar and clear on completion", async ({
+  page,
+}) => {
+  await start(page);
+  await create(page, "期限が近いタスク");
+  await page.locator("#task-start").fill(dateKey());
+  await page.locator("#task-due").fill(addDays(dateKey(), 3));
+  await page.getByRole("button", { name: "タスクを作成", exact: true }).click();
+  const card = page
+    .locator(".task-card")
+    .filter({ hasText: "期限が近いタスク" });
+  await expect(card).toHaveClass(/deadline-soon/);
+  await expect(card).toContainText("期限まで3日");
+  const id = await card.getAttribute("data-task");
+  await page.getByRole("tab", { name: "ガントチャート", exact: true }).click();
+  await expect(page.locator(`[data-bar-task="${id}"]`)).toHaveClass(
+    /deadline-soon/,
+  );
+  await page.getByRole("tab", { name: "カレンダー", exact: true }).click();
+  await expect(
+    page.locator(`[data-calendar-task="${id}"]`).first(),
+  ).toHaveClass(/deadline-soon/);
+  await page.getByRole("tab", { name: "かんばん", exact: true }).click();
+  await open(page, "期限が近いタスク");
+  await page.locator("#task-start").fill(addDays(dateKey(), -3));
+  await page.locator("#task-due").fill(addDays(dateKey(), -1));
+  await page.getByRole("button", { name: "変更を保存" }).click();
+  await expect(card).toHaveClass(/deadline-overdue/);
+  await page
+    .getByRole("button", { name: "期限が近いタスク：未着手。次の状態へ変更" })
+    .click();
+  await page
+    .getByRole("button", { name: "期限が近いタスク：進行中。次の状態へ変更" })
+    .click();
+  await expect(card).not.toHaveClass(/deadline-(soon|overdue)/);
+});
+
+test("calendar shows overlapping ranges in lanes and continues a long task across week boundaries", async ({
+  page,
+}) => {
+  const state = initialState(),
+    month = dateKey().slice(0, 7) + "-01",
+    startDay = addDays(month, (8 - new Date(month + "T12:00:00").getDay()) % 7);
+  state.tasks = state.tasks.slice(0, 2);
+  state.tasks[0].title = "長い予定";
+  state.tasks[0].start = startDay;
+  state.tasks[0].due = addDays(startDay, 12);
+  state.tasks[1].title = "重なる予定";
+  state.tasks[1].start = addDays(startDay, 1);
+  state.tasks[1].due = addDays(startDay, 3);
+  await seedState(page, state);
+  await start(page);
+  await page.getByRole("tab", { name: "カレンダー", exact: true }).click();
+  const bars = page.locator(`[data-calendar-task="${state.tasks[0].id}"]`);
+  expect(await bars.count()).toBeGreaterThanOrEqual(2);
+  await expect(bars.first()).toHaveClass(/continues-after/);
+  await expect(bars.last()).toHaveClass(/continues-before/);
+  const row = bars.first().locator("..");
+  const second = row.locator(`[data-calendar-task="${state.tasks[1].id}"]`);
+  expect(await bars.first().evaluate((el) => el.style.gridRow)).not.toBe(
+    await second.evaluate((el) => el.style.gridRow),
+  );
+  await bars.first().click();
+  await expect(page.locator("#task-title")).toHaveValue("長い予定");
+});
+
+test("new task drawer bounds scrolling without a blank area and adapts to a smaller viewport", async ({
+  page,
+  context,
+}, info) => {
+  await start(page);
+  await create(page, "スクロールの確認");
+  for (let i = 0; i < 8; i++) {
+    await page.getByPlaceholder("チェック項目を追加…").fill("項目" + i);
+    await page.getByPlaceholder("チェック項目を追加…").press("Enter");
+  }
+  const body = page.locator(".drawer-body");
+  await body.evaluate((el) => (el.scrollTop = el.scrollHeight));
+  const positions = await page.evaluate(() => {
+    const b = document.querySelector(".drawer-body").getBoundingClientRect(),
+      a = document.querySelector(".upload-area").getBoundingClientRect(),
+      f = document.querySelector(".drawer-footer").getBoundingClientRect();
+    return {
+      blank: b.bottom - a.bottom,
+      footer: f.bottom,
+      viewport: innerHeight,
+      outerScroll: document.scrollingElement.scrollHeight,
+    };
+  });
+  expect(positions.blank).toBeLessThan(60);
+  expect(positions.footer).toBeLessThanOrEqual(positions.viewport + 1);
+  expect(positions.outerScroll).toBeLessThanOrEqual(positions.viewport + 1);
+  if (info.project.name === "mobile") {
+    const cdp = await context.newCDPSession(page),
+      b = await body.boundingBox(),
+      x = b.x + b.width / 2,
+      y = b.y + b.height - 40;
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [{ x, y, id: 1 }],
+    });
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [{ x, y: y - 160, id: 1 }],
+    });
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchEnd",
+      touchPoints: [],
+    });
+    await cdp.detach();
+    expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  }
+  const original = page.viewportSize();
+  await page.setViewportSize({ width: original.width, height: 480 });
+  await expect(page.locator(".drawer-footer")).toBeInViewport();
+  expect(
+    await page
+      .locator("#modal")
+      .evaluate((el) => el.getBoundingClientRect().bottom),
+  ).toBeLessThanOrEqual(481);
+  await page.setViewportSize(original);
+  await page.screenshot({
+    path: `/tmp/taskly-smart-drawer-${test.info().project.name}.png`,
+  });
+  await page.getByRole("button", { name: "タスクを作成", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "スクロールの確認", exact: true }),
+  ).toBeVisible();
+});
+
+test("deadline colors refresh after the date changes while the app stays open", async ({
+  page,
+}) => {
+  await page.clock.install({ time: new Date(2026, 10, 5, 23, 59, 30) });
+  await start(page);
+  await create(page, "日付が変わるタスク");
+  await page.locator("#task-start").fill("2026-11-05");
+  await page.locator("#task-due").fill("2026-11-09");
+  await page.getByRole("button", { name: "タスクを作成", exact: true }).click();
+  const card = page
+    .locator(".task-card")
+    .filter({ hasText: "日付が変わるタスク" });
+  await expect(card).not.toHaveClass(/deadline-soon/);
+  await page.clock.fastForward(60000);
+  await expect(card).toHaveClass(/deadline-soon/);
+  await expect(card).toContainText("期限まで3日");
 });

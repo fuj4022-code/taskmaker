@@ -7,7 +7,7 @@
     "dev": "node server.mjs",
     "start": "node server.mjs",
     "test": "node --test test/taskly-model.test.mjs",
-    "check": "node --check src/app.js && node --check src/model.js && node --check src/sync.js && node --check src/storage.js",
+    "check": "node --check src/app.js && node --check src/model.js && node --check src/sync.js && node --check src/storage.js && node --check src/schedule.js",
     "test:e2e": "playwright test"
   },
   "engines": {

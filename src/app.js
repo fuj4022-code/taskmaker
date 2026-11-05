@@ -4,9 +4,7 @@ import {
   columns,
   resizeRange,
   calendarDays,
-  occursOn,
   dateRangeValid,
-  COLORS,
   uid,
   dateKey,
   addDays,
@@ -17,6 +15,14 @@ import {
   validState,
 } from "./model.js";
 import { load, save } from "./storage.js";
+import {
+  addMonths,
+  ganttWindow,
+  ganttBar,
+  deadlineState,
+  deadlineLabel,
+  calendarWeeks,
+} from "./schedule.js";
 import {
   getConfig,
   getAuth,
@@ -72,7 +78,6 @@ const esc = (s) =>
 const app = document.querySelector("#app"),
   modal = document.querySelector("#modal");
 let state,
-  projectId = "all",
   view = "board",
   search = "",
   tag = "",
@@ -86,7 +91,18 @@ let state,
   ),
   calendarMonth = dateKey().slice(0, 7) + "-01",
   activeResize = null,
-  ganttStart = addDays(dateKey(), -4),
+  ganttAnchor = dateKey().slice(0, 7) + "-01",
+  ganttUnit =
+    localStorage.getItem("taskly-gantt-unit") === "day" ? "day" : "week",
+  ganttMonths = [1, 3, 6].includes(
+    Number(localStorage.getItem("taskly-gantt-months")),
+  )
+    ? Number(localStorage.getItem("taskly-gantt-months"))
+    : 3,
+  weekWidth = Math.min(
+    140,
+    Math.max(56, Number(localStorage.getItem("taskly-week-width")) || 84),
+  ),
   draft = null,
   dirty = false,
   saving = false,
@@ -102,9 +118,6 @@ function toast(msg) {
   t.classList.add("show");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove("show"), 4500);
-}
-function project(id) {
-  return state.projects.find((p) => p.id === id);
 }
 function formatDate(d) {
   return d
@@ -129,7 +142,6 @@ function tasks() {
     .filter((t) => Boolean(t.archived) === archiveMode)
     .filter(
       (t) =>
-        (projectId === "all" || t.projectId === projectId) &&
         (!search ||
           [t.title, t.description, ...t.tags]
             .join(" ")
@@ -210,27 +222,46 @@ function updateConnection() {
 }
 function render() {
   if (activeResize) return;
-  const previousScroll = app.querySelector(".gantt-scroll");
-  const scroll = previousScroll
-    ? { left: previousScroll.scrollLeft, top: previousScroll.scrollTop }
-    : null;
-  const all = activeTasks(state),
-    list = tasks(),
-    selected = project(projectId),
-    title = archiveMode ? "アーカイブ" : selected?.name || "すべてのタスク";
+  const old = app.querySelector(".gantt-scroll"),
+    scroll = old ? { left: old.scrollLeft, top: old.scrollTop } : null;
+  const list = tasks(),
+    all = activeTasks(state),
+    title = archiveMode ? "アーカイブ" : "すべてのタスク";
   const tags = [
     ...new Set(
       activeTasks(state, { includeArchived: true })
         .filter((t) => Boolean(t.archived) === archiveMode)
-        .filter((t) => projectId === "all" || t.projectId === projectId)
         .flatMap((t) => t.tags),
     ),
   ].sort();
-  const done = list.filter((t) => t.status === "done").length,
-    overdue = list.filter(
-      (t) => t.due && t.due < dateKey() && t.status !== "done",
-    ).length;
-  app.innerHTML = `<div class="layout ${navOpen ? "nav-open" : ""} ${sidebarHidden ? "sidebar-hidden" : ""}"><button class="nav-shade" data-action="nav" aria-label="メニューを閉じる"></button><aside class="sidebar" ${window.matchMedia("(max-width:760px)").matches ? (!navOpen ? "inert" : "") : sidebarHidden ? "inert" : ""}><a href="#" class="brand" data-action="home"><span class="brand-mark">${icon("leaf")}</span>taskly<span class="brand-dot">.</span></a><button class="icon-button sidebar-close" data-action="nav" aria-label="サイドバーを閉じる">${icon("close")}</button><div class="workspace"><span class="workspace-avatar">M</span><div><strong>マイワークスペース</strong><small>自分らしく、進めよう</small></div><span class="workspace-chevron">${icon("down")}</span></div><p class="nav-label">ワークスペース</p><button class="nav-item ${projectId === "all" && !archiveMode ? "active" : ""}" data-project="all">${icon("grid")}<span>すべてのタスク</span><span class="nav-count">${all.length}</span></button><div class="nav-label project-label"><span>プロジェクト</span><button class="icon-button" data-action="project-new" aria-label="プロジェクトを追加">${icon("plus")}</button></div><nav class="project-nav">${state.projects.map((p) => `<button class="nav-item ${projectId === p.id ? "active" : ""}" data-project="${p.id}"><span class="project-dot" style="--dot:${p.color}"></span><span>${esc(p.name)}</span><span class="nav-count">${all.filter((t) => t.projectId === p.id).length}</span></button>`).join("")}</nav><button class="add-project" data-action="project-new">${icon("plus")}新しいプロジェクト</button><button class="nav-item ${archiveMode ? "active" : ""}" data-action="archive">${icon("archive")}<span>アーカイブ</span><span class="nav-count">${activeTasks(state, { includeArchived: true }).filter((t) => t.archived).length}</span></button><div class="sidebar-bottom"><div class="little-note"><span>${icon("sun")}</span><strong>小さな一歩が、大きな前進。</strong><p>今日の「できた」を増やそう。</p><div class="note-art"><i></i><i></i><i></i></div></div><button class="nav-item" data-action="settings">${icon("settings")}<span>設定・データ同期</span></button><div class="profile"><span class="profile-avatar">M</span><div><strong>マイアカウント</strong><small>${getAuth() ? "クラウド同期が有効" : "ローカルワークスペース"}</small></div><span class="online-dot"></span></div></div></aside><main><header class="topbar"><button class="icon-button sidebar-toggle" data-action="nav" aria-label="メニュー" aria-expanded="${window.matchMedia("(max-width:760px)").matches ? navOpen : !sidebarHidden}" title="サイドバーを開く・閉じる">${icon("menu")}</button><div class="breadcrumb">ワークスペース ${icon("chevron")} <span>${esc(title)}</span></div><div class="top-actions"><span class="connection"><span class="online-dot"></span><span data-connection>${connectionText()}</span></span><button class="icon-button" data-action="settings" aria-label="同期と設定">${icon("cloud")}</button><span class="top-avatar">M</span></div></header><div class="content"><div class="page-heading"><div><div class="eyebrow">YOUR SPACE, YOUR PACE</div><div class="project-title-line"><h1>${esc(title)}<span class="heading-dot" style="--dot:${selected?.color || "#4d8b78"}"></span></h1>${selected && !archiveMode ? `<button class="icon-button rename-project" data-action="project-rename" aria-label="プロジェクト名を変更">${icon("edit")}</button>` : ""}</div><p>${selected ? "アイデアを整理して、ひとつずつ形に。" : "今日やることも、これからの計画も。ここから始めよう。"}</p></div>${archiveMode ? `<span class="archive-heading-note">完了したタスクを保管しています</span>` : `<button class="button primary new-task" data-action="new">${icon("plus")}タスクを追加</button>`}</div><div class="stats"><div class="stat"><span class="stat-icon total">${icon("list")}</span><div><span>すべてのタスク</span><strong>${list.length}<small>件</small></strong></div><div class="mini-bars"><i></i><i></i><i></i><i></i><i></i></div></div><div class="stat"><span class="stat-icon progress">${icon("clock")}</span><div><span>進行中</span><strong>${list.filter((t) => t.status === "doing").length}<small>件</small></strong></div><span class="stat-note">少しずつ前へ</span></div><div class="stat"><span class="stat-icon complete">${icon("check")}</span><div><span>完了</span><strong>${done}<small>件</small></strong></div><span class="completion-ring" style="--progress:${list.length ? (done / list.length) * 100 : 0}%"><span>${list.length ? Math.round((done / list.length) * 100) : 0}%</span></span></div><div class="stat"><span class="stat-icon deadline">${icon("calendar")}</span><div><span>期限超過</span><strong>${overdue}<small>件</small></strong></div><span class="stat-note">${overdue ? "日程を見直そう" : "順調なペースです"}</span></div></div><div class="view-toolbar">${archiveMode ? '<div class="archive-filter-label">保管済みタスク</div>' : `<div class="view-tabs" role="tablist" aria-label="表示形式"><button role="tab" aria-selected="${view === "board"}" class="${view === "board" ? "selected" : ""}" data-view="board">${icon("board")}かんばん</button><button role="tab" aria-selected="${view === "gantt"}" class="${view === "gantt" ? "selected" : ""}" data-view="gantt">${icon("gantt")}ガントチャート</button><button role="tab" aria-selected="${view === "calendar"}" class="${view === "calendar" ? "selected" : ""}" data-view="calendar">${icon("calendar")}カレンダー</button></div>`}<div class="toolbar-right"><label class="search-box">${icon("search")}<input id="search" placeholder="タスクを検索…" aria-label="タスクを検索" value="${esc(search)}"><kbd>/</kbd></label><label class="filter-select"><span class="sr-only">状態で絞り込み</span><select id="status-filter"><option value="">すべての状態</option>${STATUSES.map((s) => `<option value="${s.id}" ${s.id === statusFilter ? "selected" : ""}>${esc(statusLabel(s.id))}</option>`).join("")}</select>${icon("down")}</label></div></div><div class="tag-toolbar"><div class="tag-filters">${icon("tag")}<button class="tag-filter ${!tag ? "selected" : ""}" data-tag="">すべて</button>${tags.map((t) => `<button class="tag-filter ${tag === t ? "selected" : ""}" data-tag="${esc(t)}">${esc(t)}</button>`).join("")}</div><span class="result-count">${list.length} 件のタスク</span></div>${archiveMode ? archiveList(list) : view === "board" ? board(list) : view === "gantt" ? gantt(list) : calendar(list)}<footer class="page-footer"><span>${icon("check")}変更はこの端末に自動保存されます</span><span>Make room for what matters.</span></footer></div></main></div>`;
+  const mobile = window.matchMedia("(max-width:760px)").matches;
+  app.innerHTML = `<div class="layout ${navOpen ? "nav-open" : ""} ${sidebarHidden ? "sidebar-hidden" : ""}">
+ <button class="nav-shade" data-action="nav" aria-label="メニューを閉じる"></button>
+ <aside class="sidebar" ${(mobile ? !navOpen : sidebarHidden) ? "inert" : ""}>
+  <div class="sidebar-heading"><a href="#" class="brand" data-action="home">Taskly</a><button class="icon-button" data-action="nav" aria-label="サイドバーを閉じる">${icon("close")}</button></div>
+  <nav aria-label="メインメニュー"><button class="nav-item ${!archiveMode ? "active" : ""}" data-action="home">${icon("board")}<span>すべてのタスク</span><span class="nav-count">${all.length}</span></button>
+  <button class="nav-item ${archiveMode ? "active" : ""}" data-action="archive">${icon("archive")}<span>アーカイブ</span><span class="nav-count">${activeTasks(state, { includeArchived: true }).filter((t) => t.archived).length}</span></button></nav>
+  <div class="sidebar-bottom"><button class="nav-item" data-action="settings">${icon("settings")}設定・データ同期</button></div>
+ </aside><main><header class="topbar"><button class="icon-button sidebar-toggle" data-action="nav" aria-label="メニュー" aria-expanded="${mobile ? navOpen : !sidebarHidden}" title="サイドバーを開く・閉じる">${icon("menu")}</button><span class="topbar-title">タスク管理</span><div class="top-actions"><span class="connection"><span class="online-dot"></span><span data-connection>${connectionText()}</span></span><button class="icon-button" data-action="settings" aria-label="同期と設定">${icon("cloud")}</button></div></header>
+ <div class="content"><div class="page-heading"><h1>${title}</h1>${archiveMode ? '<span class="archive-heading-note">完了したタスクを保管しています</span>' : `<button class="button primary" data-action="new">${icon("plus")}タスクを追加</button>`}</div>
+ <div class="view-toolbar">${
+   archiveMode
+     ? '<span class="archive-filter-label">保管済みタスク</span>'
+     : `<div class="view-tabs" role="tablist" aria-label="表示形式">${[
+         ["board", "board", "かんばん"],
+         ["gantt", "gantt", "ガントチャート"],
+         ["calendar", "calendar", "カレンダー"],
+       ]
+         .map(
+           ([id, i, label]) =>
+             `<button role="tab" aria-selected="${view === id}" class="${view === id ? "selected" : ""}" data-view="${id}">${icon(i)}${label}</button>`,
+         )
+         .join("")}</div>`
+ }
+ <div class="toolbar-right"><label class="search-box">${icon("search")}<input id="search" placeholder="タスクを検索…" aria-label="タスクを検索" value="${esc(search)}"></label><label class="filter-select"><span class="sr-only">状態で絞り込み</span><select id="status-filter"><option value="">すべての状態</option>${STATUSES.map((s) => `<option value="${s.id}" ${s.id === statusFilter ? "selected" : ""}>${esc(statusLabel(s.id))}</option>`).join("")}</select>${icon("down")}</label></div></div>
+ <div class="tag-toolbar"><div class="tag-filters"><button class="tag-filter ${!tag ? "selected" : ""}" data-tag="">すべて</button>${tags.map((t) => `<button class="tag-filter ${tag === t ? "selected" : ""}" data-tag="${esc(t)}">${esc(t)}</button>`).join("")}</div><span class="result-count">${list.length} 件</span></div>
+ ${archiveMode ? archiveList(list) : view === "board" ? board(list) : view === "gantt" ? gantt(list) : calendar(list)}
+ ${!archiveMode ? '<p class="deadline-legend"><span class="deadline-key soon"></span>期限まで3日以内 <span class="deadline-key overdue"></span>期限超過</p>' : ""}</div></main></div>`;
   bind();
   const scroller = app.querySelector(".gantt-scroll");
   if (scroller && scroll) {
@@ -252,69 +283,84 @@ function board(list) {
 }
 function card(t) {
   const checked = t.checklist.filter((c) => c.done).length,
-    late = t.due && t.due < dateKey() && t.status !== "done";
-  return `<article class="task-card ${t.status === "done" ? "is-done" : ""}" data-task="${t.id}" draggable="true" tabindex="0" aria-label="${esc(t.title)}を開く">${t.images.length ? `<div class="card-cover"><img src="${t.images[0].data}" alt="${esc(t.images[0].name)}" draggable="false"></div>` : ""}<div class="card-body"><div class="card-top"><div class="task-tags">${t.tags.map((tag) => `<span class="task-tag tag-${tagColor(tag)}">${esc(tag)}</span>`).join("")}${!t.tags.length ? '<span class="untagged">タスク</span>' : ""}</div><button class="status-quick ${t.status}" data-cycle="${t.id}" aria-label="${esc(t.title)}：${esc(statusLabel(t.status))}。次の状態へ変更" title="ワンタッチで状態を変更">${statusIcon(t.status)}</button></div><h3>${esc(t.title)}</h3>${t.description ? `<p class="card-description">${esc(t.description)}</p>` : ""}${t.checklist.length ? `<div class="card-progress"><div><span>${icon("list")}チェックリスト</span><span>${checked}/${t.checklist.length}</span></div><div class="progress-track"><span style="width:${(checked / t.checklist.length) * 100}%"></span></div></div>` : ""}<div class="card-progress-state">${progressBadge(t)}${t.status === "done" ? `<button class="icon-button" data-archive-task="${t.id}" aria-label="${esc(t.title)}をアーカイブ" title="アーカイブ">${icon("archive")}</button>` : ""}</div><div class="card-footer"><span class="due ${late ? "late" : ""}">${icon("calendar")}${formatDate(t.due)}</span><div class="card-meta">${t.images.length ? `<span>${icon("image")}${t.images.length}</span>` : ""}<span class="task-avatar" style="--dot:${project(t.projectId)?.color}">M</span></div></div></div></article>`;
+    urgency = deadlineState(t);
+  return `<article class="task-card ${t.status === "done" ? "is-done" : ""} ${urgency ? "deadline-" + urgency : ""}" data-task="${t.id}" draggable="true" tabindex="0" aria-label="${esc(t.title)}を開く">${t.images.length ? `<div class="card-cover"><img src="${t.images[0].data}" alt="${esc(t.images[0].name)}" draggable="false"></div>` : ""}<div class="card-body"><div class="card-top"><div class="task-tags">${t.tags.map((tag) => `<span class="task-tag tag-${tagColor(tag)}">${esc(tag)}</span>`).join("")}${!t.tags.length ? '<span class="untagged">タスク</span>' : ""}</div><button class="status-quick ${t.status}" data-cycle="${t.id}" aria-label="${esc(t.title)}：${esc(statusLabel(t.status))}。次の状態へ変更" title="ワンタッチで状態を変更">${statusIcon(t.status)}</button></div><h3>${esc(t.title)}</h3>${t.description ? `<p class="card-description">${esc(t.description)}</p>` : ""}${t.checklist.length ? `<div class="card-progress"><div><span>${icon("list")}チェックリスト</span><span>${checked}/${t.checklist.length}</span></div><div class="progress-track"><span style="width:${(checked / t.checklist.length) * 100}%"></span></div></div>` : ""}<div class="card-progress-state">${progressBadge(t)}${t.status === "done" ? `<button class="icon-button" data-archive-task="${t.id}" aria-label="${esc(t.title)}をアーカイブ" title="アーカイブ">${icon("archive")}</button>` : ""}</div><div class="card-footer"><span class="due" title="${deadlineLabel(t)}">${icon("calendar")}${formatDate(t.due)}${urgency ? `<strong class="deadline-label">${deadlineLabel(t)}</strong>` : ""}</span><div class="card-meta">${t.images.length ? `<span>${icon("image")}${t.images.length}</span>` : ""}</div></div></div></article>`;
 }
 function tagColor(t) {
   let n = 0;
   for (const c of t) n += c.charCodeAt(0);
   return n % 5;
 }
+function timeline() {
+  return ganttWindow(ganttAnchor, ganttMonths, ganttUnit);
+}
+function columnWidth() {
+  return ganttUnit === "week" ? weekWidth : dayWidth;
+}
+function pixelsPerDay() {
+  return columnWidth() / (ganttUnit === "week" ? 7 : 1);
+}
 function ganttGeometry(start, end) {
-  const left = dayDiff(ganttStart, start),
-    right = dayDiff(ganttStart, end);
-  return {
-    left: Math.max(0, left) * dayWidth + 4,
-    width: (Math.min(34, right) - Math.max(0, left) + 1) * dayWidth - 8,
-    visible: right >= 0 && left < 35,
-    hasStart: left >= 0,
-    hasEnd: right < 35,
-  };
+  return ganttBar(start, end, timeline(), columnWidth());
 }
 function ganttRow(t, check = null) {
   const item = check || t,
     start = item.start || item.due,
-    end = item.due || item.start;
-  const status = check ? (check.done ? "done" : "todo") : t.status;
+    end = item.due || item.start,
+    status = check ? (check.done ? "done" : "todo") : t.status;
   const title = check ? check.text : t.title,
-    geo = start ? ganttGeometry(start, end) : null;
+    geo = start ? ganttGeometry(start, end) : null,
+    w = timeline();
   const attrs = `data-resize-task="${t.id}" ${check ? `data-resize-check="${check.id}"` : ""}`;
-  const days = Array.from({ length: 35 }, (_, i) => addDays(ganttStart, i));
-  return `<button class="gantt-title gantt-task ${check ? "gantt-subtask" : ""}" data-open="${t.id}"><span class="column-status ${status}">${statusIcon(status)}</span><span>${esc(title)}</span>${!check ? progressBadge(t) : ""}</button><div class="gantt-row ${check ? "subtask-row" : ""}">${days.map((d) => `<span class="gantt-cell ${d === dateKey() ? "today" : ""} ${[0, 6].includes(new Date(d + "T12:00:00").getDay()) ? "weekend" : ""}"></span>`).join("")}${geo?.visible ? `<div class="gantt-bar ${status}" data-bar-task="${t.id}" ${check ? `data-bar-check="${check.id}"` : ""} data-start="${start}" data-end="${end}" style="left:${geo.left}px;width:${geo.width}px" title="${esc(title)} ${formatDate(start)}〜${formatDate(end)}">${geo.hasStart ? `<button class="gantt-resize start" data-resize="start" ${attrs} aria-label="${esc(title)}の開始日を調整" title="ドラッグまたは左右キーで開始日を調整"></button>` : ""}<button class="gantt-bar-label" data-open="${t.id}">${esc(title)}</button>${geo.hasEnd ? `<button class="gantt-resize due" data-resize="due" ${attrs} aria-label="${esc(title)}の期限日を調整" title="ドラッグまたは左右キーで期限日を調整"></button>` : ""}</div>` : `<button class="unscheduled" data-open="${t.id}">${start ? "表示期間外 · 日程を確認" : "日程を設定する"} ${icon("arrow")}</button>`}</div>`;
+  const urgency = deadlineState(check ? { ...check, status } : t);
+  return `<button class="gantt-title gantt-task ${check ? "gantt-subtask" : ""}" data-open="${t.id}"><span class="column-status ${status}">${statusIcon(status)}</span><span>${esc(title)}</span>${!check ? progressBadge(t) : ""}</button><div class="gantt-row ${check ? "subtask-row" : ""}">${w.columns.map((d) => `<span class="gantt-cell ${dateKey() >= d && dateKey() <= addDays(d, w.daysPerColumn - 1) ? "today" : ""} ${ganttUnit === "day" && [0, 6].includes(new Date(d + "T12:00:00").getDay()) ? "weekend" : ""}"></span>`).join("")}${geo?.visible ? `<div class="gantt-bar ${status} ${urgency ? "deadline-" + urgency : ""}" data-bar-task="${t.id}" ${check ? `data-bar-check="${check.id}"` : ""} data-start="${start}" data-end="${end}" style="left:${geo.left}px;width:${geo.width}px" title="${esc(title)} ${formatDate(start)}〜${formatDate(end)}${urgency ? " · " + deadlineLabel(check ? { ...check, status } : t) : ""}">${geo.hasStart ? `<button class="gantt-resize start" data-resize="start" ${attrs} aria-label="${esc(title)}の開始日を調整" title="ドラッグまたは左右キーで開始日を調整"></button>` : ""}<button class="gantt-bar-label" data-open="${t.id}">${esc(title)}</button>${geo.hasEnd ? `<button class="gantt-resize due" data-resize="due" ${attrs} aria-label="${esc(title)}の期限日を調整" title="ドラッグまたは左右キーで期限日を調整"></button>` : ""}</div>` : `<button class="unscheduled" data-open="${t.id}">${start ? "表示期間外 · 日程を確認" : "日程を設定する"} ${icon("arrow")}</button>`}</div>`;
 }
 function gantt(list) {
-  const days = Array.from({ length: 35 }, (_, i) => addDays(ganttStart, i));
-  return `<section class="gantt-section" style="--day-width:${dayWidth}px;--timeline-width:${35 * dayWidth}px"><div class="gantt-tools"><div><strong>${new Intl.DateTimeFormat("ja-JP", { year: "numeric", month: "long", day: "numeric" }).format(new Date(ganttStart + "T12:00:00"))}〜${formatDate(addDays(ganttStart, 34))}</strong><span>35日間のスケジュール</span></div><div class="gantt-controls"><label class="gantt-width">1日の幅<input type="range" id="day-width" aria-label="ガントの1日の幅" min="24" max="80" step="4" value="${dayWidth}"><output id="day-width-value">${dayWidth}px</output></label><button class="icon-button back" data-shift="-14" aria-label="前の期間">${icon("chevron")}</button><button class="button small" data-action="today">今日</button><button class="icon-button" data-shift="14" aria-label="次の期間">${icon("chevron")}</button></div></div><p class="resize-feedback" role="status">帯の両端をドラッグすると期間を変更できます。左右キーでも1日ずつ調整できます。</p><div class="gantt-scroll"><div class="gantt-grid"><div class="gantt-title gantt-corner">タスク名 <span>${list.length}</span></div><div class="gantt-dates">${days.map((d) => `<div class="gantt-day ${d === dateKey() ? "today" : ""} ${[0, 6].includes(new Date(d + "T12:00:00").getDay()) ? "weekend" : ""}"><small>${["日", "月", "火", "水", "木", "金", "土"][new Date(d + "T12:00:00").getDay()]}</small><strong>${Number(d.slice(8))}</strong></div>`).join("")}</div>${list.map((t) => ganttRow(t) + t.checklist.map((c) => ganttRow(t, c)).join("")).join("")}${!list.length ? '<div class="gantt-empty">表示するタスクがありません。タスクを追加してください。</div>' : ""}</div></div><div class="gantt-legend">${STATUSES.map((s) => `<span><i style="background:${s.color}"></i>${esc(statusLabel(s.id))}</span>`).join("")}<span class="legend-hint">小さな行はチェックリストの予定です</span></div></section>`;
+  const w = timeline(),
+    groups = [];
+  for (const d of w.columns) {
+    const key = d.slice(0, 7),
+      last = groups.at(-1);
+    if (last?.key === key) last.count++;
+    else groups.push({ key, count: 1 });
+  }
+  const width = columnWidth();
+  return `<section class="gantt-section" style="--day-width:${width}px;--timeline-width:${w.columns.length * width}px" data-unit="${ganttUnit}" data-range-start="${w.start}" data-range-end="${w.end}">
+ <div class="gantt-tools"><div class="timeline-navigation"><button class="icon-button back" data-timeline-shift="-1" aria-label="前の期間">${icon("chevron")}</button><strong>${w.start.slice(0, 4)}年 ${formatDate(w.start)}〜${w.end.slice(0, 4) !== w.start.slice(0, 4) ? w.end.slice(0, 4) + "年 " : ""}${formatDate(w.end)}</strong><button class="icon-button" data-timeline-shift="1" aria-label="次の期間">${icon("chevron")}</button><button class="button small" data-action="today">今日</button></div>
+ <div class="gantt-controls"><label class="compact-field">表示期間<select id="gantt-months" aria-label="ガントの表示期間">${[1, 3, 6].map((n) => `<option value="${n}" ${n === ganttMonths ? "selected" : ""}>${n}か月</option>`).join("")}</select></label><label class="compact-field">表示単位<select id="gantt-unit" aria-label="ガントの表示単位"><option value="day" ${ganttUnit === "day" ? "selected" : ""}>日ごと</option><option value="week" ${ganttUnit === "week" ? "selected" : ""}>週ごと</option></select></label><label class="gantt-width">列幅<input type="range" id="day-width" aria-label="ガントの列幅" min="${ganttUnit === "week" ? 56 : 24}" max="${ganttUnit === "week" ? 140 : 80}" step="4" value="${width}"><output id="day-width-value">${width}px</output></label></div></div>
+ <p class="resize-feedback" role="status">帯の両端をドラッグして期間を変更。左右キーは1日ずつ調整。</p>
+ <div class="gantt-scroll"><div class="gantt-grid"><div class="gantt-title gantt-corner">タスク名</div><div class="gantt-dates"><div class="gantt-months">${groups.map((g) => `<div style="width:${g.count * width}px" data-column-count="${g.count}">${g.key.replace("-", "年")}月</div>`).join("")}</div><div class="gantt-date-cells">${w.columns.map((d) => `<div class="gantt-day ${dateKey() >= d && dateKey() <= addDays(d, w.daysPerColumn - 1) ? "today" : ""}">${ganttUnit === "week" ? `<strong>${formatDate(d)}</strong><small>〜${formatDate(addDays(d, 6))}</small>` : `<small>${["日", "月", "火", "水", "木", "金", "土"][new Date(d + "T12:00:00").getDay()]}</small><strong>${Number(d.slice(8))}</strong>`}</div>`).join("")}</div></div>
+ ${list.map((t) => ganttRow(t) + t.checklist.map((c) => ganttRow(t, c)).join("")).join("")}${!list.length ? '<div class="gantt-empty">表示するタスクはありません。</div>' : ""}</div></div></section>`;
 }
 function calendar(list) {
-  const days = calendarDays(calendarMonth),
+  const weeks = calendarWeeks(list, calendarMonth),
     month = calendarMonth.slice(0, 7),
     today = dateKey();
-  return `<section class="calendar-section"><header class="calendar-toolbar"><div><h2>${new Intl.DateTimeFormat("ja-JP", { year: "numeric", month: "long" }).format(new Date(calendarMonth + "T12:00:00"))}</h2><span>開始日から期限日までのタスクを表示</span></div><div><button class="icon-button back" data-month-shift="-1" aria-label="前の月">${icon("chevron")}</button><button class="button small" data-action="today">今日</button><button class="icon-button" data-month-shift="1" aria-label="次の月">${icon("chevron")}</button></div></header><div class="calendar-weekdays">${["月", "火", "水", "木", "金", "土", "日"].map((d) => `<span>${d}</span>`).join("")}</div><div class="month-grid">${days
-    .map(
-      (day) =>
-        `<div class="calendar-day ${day.slice(0, 7) !== month ? "other-month" : ""} ${day === today ? "today" : ""}" data-day="${day}"><div class="calendar-day-heading"><span>${Number(day.slice(8))}</span><button class="icon-button" data-date-new="${day}" aria-label="${day}にタスクを追加">${icon("plus")}</button></div><div class="calendar-events">${list
-          .filter((t) => occursOn(t, day))
-          .map(
-            (t) =>
-              `<button class="calendar-event ${t.status}" data-open="${t.id}" title="${esc(t.title)} · ${formatDate(t.start || t.due)}〜${formatDate(t.due || t.start)} · ${PROGRESS.find((p) => p.id === (t.progress || "ontrack")).label}"><i class="event-progress ${t.progress || "ontrack"}"></i><span>${esc(t.title)}</span></button>`,
-          )
-          .join("")}</div></div>`,
-    )
-    .join(
-      "",
-    )}</div><div class="calendar-unscheduled"><h3>日程未設定 <span>${list.filter((t) => !t.start && !t.due).length}</span></h3>${
-    list
-      .filter((t) => !t.start && !t.due)
-      .map(
-        (t) =>
-          `<button class="button small" data-open="${t.id}">${esc(t.title)}</button>`,
-      )
-      .join("") || "<p>すべてのタスクに日程が設定されています。</p>"
-  }</div></section>`;
+  return `<section class="calendar-section"><header class="calendar-toolbar"><h2>${new Intl.DateTimeFormat("ja-JP", { year: "numeric", month: "long" }).format(new Date(calendarMonth + "T12:00:00"))}</h2><div><button class="icon-button back" data-month-shift="-1" aria-label="前の月">${icon("chevron")}</button><button class="button small" data-action="today">今日</button><button class="icon-button" data-month-shift="1" aria-label="次の月">${icon("chevron")}</button></div></header><div class="calendar-weekdays">${["月", "火", "水", "木", "金", "土", "日"].map((d) => `<span>${d}</span>`).join("")}</div>
+ <div class="month-grid">${weeks
+   .map(
+     (w) =>
+       `<div class="calendar-week" data-week-start="${w.days[0]}"><div class="calendar-date-grid">${w.days.map((day) => `<div class="calendar-day ${day.slice(0, 7) !== month ? "other-month" : ""} ${day === today ? "today" : ""}" data-day="${day}"><div class="calendar-day-heading"><span>${Number(day.slice(8))}</span><button class="icon-button" data-date-new="${day}" aria-label="${day}にタスクを追加">${icon("plus")}</button></div></div>`).join("")}</div><div class="calendar-week-events" style="grid-template-rows:repeat(${Math.max(1, w.laneCount)},26px)">${w.segments
+         .map((s) => {
+           const t = s.task,
+             urgency = deadlineState(t);
+           return `<button class="calendar-event ${t.status} ${s.before ? "continues-before" : ""} ${s.after ? "continues-after" : ""} ${urgency ? "deadline-" + urgency : ""}" data-open="${t.id}" data-calendar-task="${t.id}" data-start="${t.start || t.due}" data-end="${t.due || t.start}" style="grid-column:${s.col + 1}/span ${s.span};grid-row:${s.lane + 1}" title="${esc(t.title)} · ${formatDate(t.start || t.due)}〜${formatDate(t.due || t.start)} · ${PROGRESS.find((p) => p.id === (t.progress || "ontrack")).label}${urgency ? " · " + deadlineLabel(t) : ""}"><span>${s.before ? "‹ " : ""}${esc(t.title)}${s.after ? " ›" : ""}</span></button>`;
+         })
+         .join("")}</div></div>`,
+   )
+   .join("")}</div>
+ <div class="calendar-unscheduled"><h3>日程未設定 <span>${list.filter((t) => !t.start && !t.due).length}</span></h3>${
+   list
+     .filter((t) => !t.start && !t.due)
+     .map(
+       (t) =>
+         `<button class="button small" data-open="${t.id}">${esc(t.title)}</button>`,
+     )
+     .join("") || "<p>日程未設定のタスクはありません。</p>"
+ }</div></section>`;
 }
 function archiveList(list) {
-  return `<section class="archive-list"><h2>${icon("archive")}アーカイブしたタスク <span>${list.length}件</span></h2>${list.map((t) => `<div class="archive-row"><button class="archive-task-name" data-open="${t.id}">${icon("check")}<span>${esc(t.title)}<small>${esc(project(t.projectId)?.name)} · ${formatDate(t.due)}</small></span></button>${progressBadge(t)}<button class="button small" data-restore-task="${t.id}">元に戻す</button></div>`).join("") || '<p class="empty-message">まだアーカイブはありません。完了したタスクのアーカイブボタンから保管できます。</p>'}</section>`;
+  return `<section class="archive-list"><h2>${icon("archive")}アーカイブしたタスク <span>${list.length}件</span></h2>${list.map((t) => `<div class="archive-row"><button class="archive-task-name" data-open="${t.id}">${icon("check")}<span>${esc(t.title)}<small>${formatDate(t.due)}</small></span></button>${progressBadge(t)}<button class="button small" data-restore-task="${t.id}">元に戻す</button></div>`).join("") || '<p class="empty-message">まだアーカイブはありません。完了したタスクのアーカイブボタンから保管できます。</p>'}</section>`;
 }
 function bindSchedule() {
   app.querySelectorAll("[data-month-shift]").forEach(
@@ -331,15 +377,58 @@ function bindSchedule() {
     .forEach(
       (b) => (b.onclick = () => openTask(null, "todo", b.dataset.dateNew)),
     );
+  app.querySelectorAll("[data-timeline-shift]").forEach(
+    (b) =>
+      (b.onclick = () => {
+        ganttAnchor = addMonths(
+          ganttAnchor,
+          Number(b.dataset.timelineShift) * ganttMonths,
+        );
+        render();
+        app.querySelector(".gantt-scroll").scrollLeft = 0;
+      }),
+  );
+  const unit = app.querySelector("#gantt-unit");
+  if (unit)
+    unit.onchange = () => {
+      ganttUnit = unit.value;
+      localStorage.setItem("taskly-gantt-unit", ganttUnit);
+      render();
+      app.querySelector(".gantt-scroll").scrollLeft = 0;
+    };
+  const months = app.querySelector("#gantt-months");
+  if (months)
+    months.onchange = () => {
+      ganttMonths = Number(months.value);
+      localStorage.setItem("taskly-gantt-months", String(ganttMonths));
+      render();
+      app.querySelector(".gantt-scroll").scrollLeft = 0;
+    };
   const width = app.querySelector("#day-width");
   if (width)
     width.oninput = () => {
-      dayWidth = Number(width.value);
-      localStorage.setItem("taskly-day-width", String(dayWidth));
+      if (ganttUnit === "week") {
+        weekWidth = Number(width.value);
+        localStorage.setItem("taskly-week-width", String(weekWidth));
+      } else {
+        dayWidth = Number(width.value);
+        localStorage.setItem("taskly-day-width", String(dayWidth));
+      }
+      const currentWidth = columnWidth();
       const section = app.querySelector(".gantt-section");
-      section.style.setProperty("--day-width", dayWidth + "px");
-      section.style.setProperty("--timeline-width", 35 * dayWidth + "px");
-      app.querySelector("#day-width-value").textContent = dayWidth + "px";
+      section.style.setProperty("--day-width", currentWidth + "px");
+      section.style.setProperty(
+        "--timeline-width",
+        timeline().columns.length * currentWidth + "px",
+      );
+      app
+        .querySelectorAll("[data-column-count]")
+        .forEach(
+          (g) =>
+            (g.style.width =
+              Number(g.dataset.columnCount) * currentWidth + "px"),
+        );
+      app.querySelector("#day-width-value").textContent = currentWidth + "px";
       app.querySelectorAll(".gantt-bar").forEach((bar) => {
         const g = ganttGeometry(bar.dataset.start, bar.dataset.end);
         bar.style.left = g.left + "px";
@@ -413,7 +502,8 @@ function beginResize(e, handle) {
     if (event.clientX > rect.right - 24) scroller.scrollLeft += 16;
     if (event.clientX < rect.left + 24) scroller.scrollLeft -= 16;
     delta = Math.round(
-      (event.clientX - startX + scroller.scrollLeft - initialScroll) / dayWidth,
+      (event.clientX - startX + scroller.scrollLeft - initialScroll) /
+        pixelsPerDay(),
     );
     try {
       range = resizeRange(
@@ -475,7 +565,7 @@ async function archiveTask(id, archived) {
 }
 function renameColumns(focusId = "todo") {
   showModal(
-    `<form class="simple-modal" id="columns-form"><header><h2>かんばんの列名を変更</h2><button type="button" class="icon-button" data-close aria-label="閉じる">${icon("close")}</button></header><p>状態の順番はそのまま、わかりやすい名前を付けられます。すべてのプロジェクトで共通です。</p>${STATUSES.map((s) => `<label class="field">${s.label}の列名<input name="${s.id}" value="${esc(statusLabel(s.id))}" required maxlength="30"></label>`).join("")}<p class="form-error" role="alert"></p><footer><button type="button" class="button" data-close>キャンセル</button><button class="button primary" type="submit">列名を保存</button></footer></form>`,
+    `<form class="simple-modal" id="columns-form"><header><h2>かんばんの列名を変更</h2><button type="button" class="icon-button" data-close aria-label="閉じる">${icon("close")}</button></header><p>状態の順番はそのまま、わかりやすい名前を付けられます。</p>${STATUSES.map((s) => `<label class="field">${s.label}の列名<input name="${s.id}" value="${esc(statusLabel(s.id))}" required maxlength="30"></label>`).join("")}<p class="form-error" role="alert"></p><footer><button type="button" class="button" data-close>キャンセル</button><button class="button primary" type="submit">列名を保存</button></footer></form>`,
     "center-modal",
   );
   modal
@@ -503,32 +593,6 @@ function renameColumns(focusId = "todo") {
   };
   modal.querySelector(`[name="${focusId}"]`).focus();
 }
-function renameProject() {
-  const p = project(projectId);
-  if (!p) return;
-  showModal(
-    `<form class="simple-modal"><header><h2>プロジェクト名を変更</h2><button type="button" class="icon-button" data-close aria-label="閉じる">${icon("close")}</button></header><label class="field">プロジェクト名<input name="name" required maxlength="100" value="${esc(p.name)}"></label><footer><button type="button" class="button" data-close>キャンセル</button><button class="button primary">名前を保存</button></footer></form>`,
-    "center-modal",
-  );
-  modal
-    .querySelectorAll("[data-close]")
-    .forEach((b) => (b.onclick = closeModal));
-  modal.querySelector("form").onsubmit = async (e) => {
-    e.preventDefault();
-    const name = new FormData(e.target).get("name").trim();
-    if (!name) return;
-    try {
-      await mutate((s) => {
-        const item = s.projects.find((x) => x.id === p.id);
-        item.name = name;
-        item.updatedAt = Math.max(Date.now(), item.updatedAt + 1);
-      });
-      closeModal();
-      toast("プロジェクト名を保存しました");
-    } catch {}
-  };
-}
-
 function bind() {
   bindSchedule();
   app
@@ -553,18 +617,15 @@ function bind() {
         const a = b.dataset.action;
         if (a === "new") openTask();
         if (a === "settings") settings();
-        if (a === "project-new") newProject();
-        if (a === "project-rename") renameProject();
         if (a === "archive") {
           archiveMode = true;
-          projectId = "all";
           tag = "";
           statusFilter = "";
           navOpen = false;
           render();
         }
         if (a === "home") {
-          projectId = "all";
+          navOpen = false;
           archiveMode = false;
           render();
         }
@@ -581,20 +642,10 @@ function bind() {
           render();
         }
         if (a === "today") {
-          ganttStart = addDays(dateKey(), -4);
+          ganttAnchor = dateKey().slice(0, 7) + "-01";
           calendarMonth = dateKey().slice(0, 7) + "-01";
           render();
         }
-      }),
-  );
-  app.querySelectorAll("[data-project]").forEach(
-    (b) =>
-      (b.onclick = () => {
-        projectId = b.dataset.project;
-        archiveMode = false;
-        tag = "";
-        navOpen = false;
-        render();
       }),
   );
   app.querySelectorAll("[data-view]").forEach(
@@ -608,13 +659,6 @@ function bind() {
     (b) =>
       (b.onclick = () => {
         tag = b.dataset.tag;
-        render();
-      }),
-  );
-  app.querySelectorAll("[data-shift]").forEach(
-    (b) =>
-      (b.onclick = () => {
-        ganttStart = addDays(ganttStart, Number(b.dataset.shift));
         render();
       }),
   );
@@ -687,11 +731,28 @@ function changeStatus(id, status) {
     .then(() => toast(`${statusLabel(status)}に変更しました`))
     .catch(() => {});
 }
+let backgroundScroll = 0,
+  lastRenderedDay = dateKey();
+function updateDialogViewport() {
+  if (!modal.open) return;
+  const viewport = window.visualViewport;
+  modal.style.setProperty(
+    "--dialog-height",
+    (viewport?.height || window.innerHeight) + "px",
+  );
+  modal.style.setProperty("--dialog-top", (viewport?.offsetTop || 0) + "px");
+}
+window.visualViewport?.addEventListener("resize", updateDialogViewport);
+window.visualViewport?.addEventListener("scroll", updateDialogViewport);
 function showModal(html, cls = "") {
+  backgroundScroll = window.scrollY;
   modal.className = cls;
   modal.innerHTML = html;
   modal.showModal();
+  document.body.style.top = -backgroundScroll + "px";
   document.body.classList.add("modal-open");
+  document.documentElement.classList.add("modal-open");
+  updateDialogViewport();
 }
 function closeModal() {
   modal.close();
@@ -699,6 +760,11 @@ function closeModal() {
   draft = null;
   dirty = false;
   document.body.classList.remove("modal-open");
+  document.documentElement.classList.remove("modal-open");
+  document.body.style.top = "";
+  modal.style.removeProperty("--dialog-height");
+  modal.style.removeProperty("--dialog-top");
+  window.scrollTo(0, backgroundScroll);
 }
 function tryClose() {
   if (saving) return;
@@ -717,7 +783,7 @@ modal.addEventListener("click", (e) => {
 function openTask(id, status = "todo", date = "") {
   const t = id
     ? state.tasks.find((t) => t.id === id)
-    : newTask(projectId === "all" ? state.projects[0].id : projectId);
+    : newTask(state.projects[0].id);
   draft = structuredClone(t);
   if (!id) {
     draft.status = status;
@@ -728,7 +794,7 @@ function openTask(id, status = "todo", date = "") {
   }
   dirty = false;
   showModal(
-    `<form id="task-form"><header class="drawer-header"><span>${icon("list")}${id ? "タスクの詳細" : "新しいタスク"}</span><button type="button" class="icon-button" id="close-modal" aria-label="閉じる">${icon("close")}</button></header><div class="drawer-body"><label class="sr-only" for="task-title">タスク名</label><input id="task-title" class="title-input" placeholder="何をしますか？" maxlength="200" required value="${esc(draft.title)}"><div class="field"><label>ステータス</label><div class="status-options">${STATUSES.map((s) => `<button type="button" data-status="${s.id}" class="status-option ${s.id === draft.status ? "selected" : ""} ${s.id}">${statusIcon(s.id)}${esc(statusLabel(s.id))}</button>`).join("")}</div></div><label class="field">進行度<select id="task-progress">${PROGRESS.map((p) => `<option value="${p.id}" ${draft.progress === p.id ? "selected" : ""}>${p.label}</option>`).join("")}</select></label><label class="field">プロジェクト<select id="task-project">${state.projects.map((p) => `<option value="${p.id}" ${p.id === draft.projectId ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label><div class="date-fields"><label class="field">開始日<input type="date" id="task-start" value="${draft.start}" max="9999-12-31"></label><label class="field">期限日<input type="date" id="task-due" value="${draft.due}" max="9999-12-31"></label></div><div class="field"><label for="tag-input">タグ <span>複数追加できます</span></label><div id="draft-tags" class="draft-tags"></div><div class="inline-add"><input id="tag-input" placeholder="タグを入力して Enter" maxlength="30" list="existing-tags"><button type="button" class="button small" id="add-tag">追加</button></div><datalist id="existing-tags">${[...new Set(activeTasks(state).flatMap((t) => t.tags))].map((t) => `<option value="${esc(t)}">`).join("")}</datalist></div><label class="field">メモ<textarea id="task-description" placeholder="アイデアや補足を書き留める…" maxlength="20000" rows="3">${esc(draft.description)}</textarea></label><div class="field"><label class="section-label">${icon("list")}チェックリスト <span id="check-count"></span></label><div id="draft-checklist"></div><div class="inline-add"><input id="check-input" placeholder="チェック項目を追加…" maxlength="300"><button type="button" class="icon-button bordered" id="add-check" aria-label="チェック項目を追加">${icon("plus")}</button></div></div><div class="field"><label class="section-label">${icon("image")}添付画像 <span>最大8枚・各10MBまで</span></label><div id="draft-images"></div><label class="upload-area">${icon("image")}<strong>画像を選択して添付</strong><span>JPEG・PNG・WebP / 自動で圧縮します</span><input type="file" id="image-input" accept="image/jpeg,image/png,image/webp" multiple></label></div><p id="form-error" class="form-error" role="alert"></p></div><footer class="drawer-footer">${id ? `<button type="button" class="icon-button danger" id="delete-task" aria-label="タスクを削除">${icon("trash")}</button>` : ""}${id ? `<button type="button" class="icon-button" id="archive-task" aria-label="${draft.archived ? "アーカイブから戻す" : "タスクをアーカイブ"}" title="${draft.archived ? "アーカイブから戻す" : "完了したタスクをアーカイブ"}" ${draft.status !== "done" ? "disabled" : ""}>${icon("archive")}</button>` : ""}<span class="save-hint">${id ? "変更後は保存してください" : "小さな一歩から始めよう。"}</span><button type="button" class="button" id="cancel-task">キャンセル</button><button type="submit" class="button primary" id="save-task">${id ? "変更を保存" : "タスクを作成"}</button></footer></form>`,
+    `<form id="task-form"><header class="drawer-header"><span>${icon("list")}${id ? "タスクの詳細" : "新しいタスク"}</span><button type="button" class="icon-button" id="close-modal" aria-label="閉じる">${icon("close")}</button></header><div class="drawer-body"><label class="sr-only" for="task-title">タスク名</label><input id="task-title" class="title-input" placeholder="タスク名" maxlength="200" required value="${esc(draft.title)}"><div class="field"><label>ステータス</label><div class="status-options">${STATUSES.map((s) => `<button type="button" data-status="${s.id}" class="status-option ${s.id === draft.status ? "selected" : ""} ${s.id}">${statusIcon(s.id)}${esc(statusLabel(s.id))}</button>`).join("")}</div></div><label class="field">進行度<select id="task-progress">${PROGRESS.map((p) => `<option value="${p.id}" ${draft.progress === p.id ? "selected" : ""}>${p.label}</option>`).join("")}</select></label><div class="date-fields"><label class="field">開始日<input type="date" id="task-start" value="${draft.start}" max="9999-12-31"></label><label class="field">期限日<input type="date" id="task-due" value="${draft.due}" max="9999-12-31"></label></div><div class="field"><label for="tag-input">タグ <span>複数追加できます</span></label><div id="draft-tags" class="draft-tags"></div><div class="inline-add"><input id="tag-input" placeholder="タグを入力して Enter" maxlength="30" list="existing-tags"><button type="button" class="button small" id="add-tag">追加</button></div><datalist id="existing-tags">${[...new Set(activeTasks(state).flatMap((t) => t.tags))].map((t) => `<option value="${esc(t)}">`).join("")}</datalist></div><label class="field">メモ<textarea id="task-description" placeholder="補足を入力" maxlength="20000" rows="3">${esc(draft.description)}</textarea></label><div class="field"><label class="section-label">${icon("list")}チェックリスト <span id="check-count"></span></label><div id="draft-checklist"></div><div class="inline-add"><input id="check-input" placeholder="チェック項目を追加…" maxlength="300"><button type="button" class="icon-button bordered" id="add-check" aria-label="チェック項目を追加">${icon("plus")}</button></div></div><div class="field"><label class="section-label">${icon("image")}添付画像 <span>最大8枚・各10MBまで</span></label><div id="draft-images"></div><label class="upload-area">${icon("image")}<strong>画像を選択して添付</strong><span>JPEG・PNG・WebP / 自動で圧縮します</span><input type="file" id="image-input" accept="image/jpeg,image/png,image/webp" multiple></label></div><p id="form-error" class="form-error" role="alert"></p></div><footer class="drawer-footer">${id ? `<button type="button" class="icon-button danger" id="delete-task" aria-label="タスクを削除">${icon("trash")}</button>` : ""}${id ? `<button type="button" class="icon-button" id="archive-task" aria-label="${draft.archived ? "アーカイブから戻す" : "タスクをアーカイブ"}" title="${draft.archived ? "アーカイブから戻す" : "完了したタスクをアーカイブ"}" ${draft.status !== "done" ? "disabled" : ""}>${icon("archive")}</button>` : ""}<span class="save-hint">${id ? "変更後は保存してください" : ""}</span><button type="button" class="button" id="cancel-task">キャンセル</button><button type="submit" class="button primary" id="save-task">${id ? "変更を保存" : "タスクを作成"}</button></footer></form>`,
     "task-drawer",
   );
   const form = modal.querySelector("form");
@@ -816,7 +882,6 @@ function openTask(id, status = "todo", date = "") {
     addCheck();
     draft.title = modal.querySelector("#task-title").value.trim();
     draft.description = modal.querySelector("#task-description").value;
-    draft.projectId = modal.querySelector("#task-project").value;
     draft.progress = modal.querySelector("#task-progress").value;
     if (draft.status !== "done") draft.archived = false;
     draft.start = modal.querySelector("#task-start").value;
@@ -988,37 +1053,6 @@ async function compressImage(file) {
     throw Error("画像をさらに縮小してお試しください。");
   return { id: uid(), name: file.name.slice(0, 200), data };
 }
-function newProject() {
-  showModal(
-    `<form id="project-form" class="simple-modal"><header><div><p class="eyebrow">A FRESH START</p><h2>新しいプロジェクト</h2></div><button type="button" class="icon-button" data-close aria-label="閉じる">${icon("close")}</button></header><p>やりたいことに、ひとつの場所を。</p><label class="field">プロジェクト名<input name="name" placeholder="例：新しいアイデア" required maxlength="100"></label><fieldset class="color-options"><legend>カラー</legend>${COLORS.map((c, i) => `<label style="--dot:${c}"><input type="radio" name="color" value="${c}" ${i === 0 ? "checked" : ""}><span>${icon("check")}</span></label>`).join("")}</fieldset><footer><button type="button" class="button" data-close>キャンセル</button><button type="submit" class="button primary">作成する</button></footer></form>`,
-    "center-modal",
-  );
-  modal
-    .querySelectorAll("[data-close]")
-    .forEach((b) => (b.onclick = closeModal));
-  modal.querySelector("form").onsubmit = async (e) => {
-    e.preventDefault();
-    const data = new FormData(e.target),
-      name = data.get("name").trim();
-    if (!name) return;
-    const p = {
-      id: uid(),
-      name,
-      color: data.get("color"),
-      updatedAt: Date.now(),
-    };
-    try {
-      await mutate((s) => s.projects.push(p));
-      projectId = p.id;
-      tag = "";
-      navOpen = false;
-      archiveMode = false;
-      closeModal();
-      render();
-      toast("プロジェクトを作成しました");
-    } catch {}
-  };
-}
 function settings() {
   const config = getConfig(),
     auth = getAuth();
@@ -1140,8 +1174,17 @@ window.addEventListener("online", () => {
   synchronize(true);
 });
 window.addEventListener("offline", updateConnection);
+setInterval(() => {
+  if (lastRenderedDay !== dateKey() && !modal.open && !activeResize) {
+    lastRenderedDay = dateKey();
+    render();
+  }
+}, 60000);
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") synchronize(true);
+  if (document.visibilityState === "visible") {
+    if (!modal.open && !activeResize) render();
+    synchronize(true);
+  }
 });
 window.addEventListener("keydown", (e) => {
   if (
