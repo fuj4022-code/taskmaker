@@ -13,6 +13,11 @@ export const defaultColumns = () =>
 export function columns(state) {
   return state.columns || defaultColumns();
 }
+export function autoArchiveCompleted(state) {
+  for (const task of state.tasks)
+    if (!task.deleted && task.status === "done") task.archived = true;
+  return state;
+}
 // Optional fields keep schema 2 documents and existing Supabase tables compatible.
 export function normalize(state) {
   if (!validState(state)) throw Error("データ形式が正しくありません。");
@@ -34,7 +39,7 @@ export function normalize(state) {
       c.due ??= "";
     }
   }
-  return next;
+  return autoArchiveCompleted(next);
 }
 export const COLORS = ["#4d8b78", "#657bb5", "#b382a8", "#cb9562", "#7e85ae"];
 export const uid = () => crypto.randomUUID();
@@ -169,7 +174,7 @@ export function initialState() {
         createdAt: now,
         updatedAt: now,
         deleted: false,
-        archived: false,
+        archived: status === "done",
         progress: "ontrack",
       }),
     ),

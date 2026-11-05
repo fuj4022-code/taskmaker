@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   initialState,
+  autoArchiveCompleted,
   normalize,
   columns,
   resizeRange,
@@ -45,7 +46,7 @@ test("deletion tombstones prevent old device and backup resurrection", () => {
   next.tasks[0].deleted = true;
   next.tasks[0].updatedAt = 100;
   const c = merge(next, old);
-  assert.equal(activeTasks(c).length, 6);
+  assert.equal(activeTasks(c).length, 4);
   assert.equal(c.tasks[0].deleted, true);
 });
 test("equal timestamp merging is deterministic in either order", () => {
@@ -127,7 +128,7 @@ test("columns, archive, progress and checklist periods survive cross-device merg
   assert.equal(c.columns[0].label, "これから");
   assert.equal(c.tasks[0].checklist[0].due, "2026-11-03");
   assert.equal(c.tasks[0].progress, "behind");
-  assert.equal(activeTasks(c).length, 6);
+  assert.equal(activeTasks(c).length, 5);
   assert.equal(activeTasks(c, { includeArchived: true }).length, 7);
   assert.equal(merge(c, initialState()).tasks[4].archived, true);
 });
@@ -249,4 +250,78 @@ test("calendar packs overlapping ranges into separate lanes with week continuati
   assert.equal(first.segments.find((s) => s.task.id === "b").after, true);
   assert.equal(second.segments.find((s) => s.task.id === "b").before, true);
   assert.equal(second.segments.find((s) => s.task.id === "b").span, 2);
+});
+
+test("completion automatically archives legacy data without changing task content or timestamps", () => {
+  const old = initialState(),
+    task = old.tasks[4];
+  task.archived = false;
+  task.images = [
+    { id: "im", name: "example.png", data: "data:image/png;base64,YWJj" },
+  ];
+  const before = structuredClone(task),
+    next = normalize(old);
+  assert.equal(next.tasks[4].archived, true);
+  assert.equal(next.tasks[4].status, "done");
+  assert.equal(next.tasks[4].updatedAt, before.updatedAt);
+  assert.deepEqual(next.tasks[4].images, before.images);
+  assert.deepEqual(next.tasks[4].checklist, before.checklist);
+  assert.equal(old.tasks[4].archived, false);
+});
+test("new completions archive and an explicit status change can reopen without stale resurrection", () => {
+  const old = initialState();
+  old.tasks[0].status = "done";
+  old.tasks[0].updatedAt = 20;
+  autoArchiveCompleted(old);
+  assert.equal(old.tasks[0].archived, true);
+  const resumed = structuredClone(old);
+  resumed.tasks[0].status = "todo";
+  resumed.tasks[0].archived = false;
+  resumed.tasks[0].updatedAt = 30;
+  const result = merge(old, resumed);
+  assert.equal(result.tasks[0].status, "todo");
+  assert.equal(result.tasks[0].archived, false);
+  assert.equal(
+    activeTasks(result).some((t) => t.id === result.tasks[0].id),
+    true,
+  );
+});
+test("Gantt groups pending periods above and undated items below, excluding completed checklist entries", async () => {
+  const { ganttPlan } = await import("../src/schedule.js");
+  const t = initialState().tasks[0];
+  t.start = "";
+  t.due = "";
+  t.checklist = [
+    {
+      id: "dated",
+      text: "Dated",
+      done: false,
+      start: "2026-11-01",
+      due: "2026-11-02",
+    },
+    { id: "undated", text: "Undated", done: false, start: "", due: "" },
+    {
+      id: "done",
+      text: "Done",
+      done: true,
+      start: "2026-11-01",
+      due: "2026-11-02",
+    },
+  ];
+  const plan = ganttPlan([t]);
+  assert.equal(plan.scheduled.length, 1);
+  assert.equal(plan.scheduled[0].own, false);
+  assert.deepEqual(
+    plan.scheduled[0].checks.map((c) => c.id),
+    ["dated"],
+  );
+  assert.deepEqual(
+    plan.unscheduled[0].checks.map((c) => c.id),
+    ["undated"],
+  );
+  assert.equal(plan.unscheduled[0].own, true);
+  const closed = ganttPlan([t], () => false);
+  assert.equal(closed.scheduled[0].checks.length, 0);
+  assert.equal(closed.unscheduled[0].checks.length, 0);
+  assert.equal(t.checklist.length, 3);
 });

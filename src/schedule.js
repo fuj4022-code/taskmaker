@@ -105,3 +105,27 @@ export function calendarWeeks(tasks, month) {
     return { days: dates, segments, laneCount: lanes.length };
   });
 }
+
+export const hasSchedule = (item) => Boolean(item.start || item.due);
+export function ganttPlan(tasks, expanded = () => true) {
+  const scheduled = [],
+    unscheduled = [];
+  for (const task of tasks) {
+    const pending = task.checklist.filter((c) => !c.done),
+      dated = pending.filter(hasSchedule),
+      undated = pending.filter((c) => !hasSchedule(c)),
+      open = expanded(task.id);
+    const own = hasSchedule(task);
+    if (own || dated.length)
+      scheduled.push({ task, own, checks: open ? dated : [], pending });
+    if (!own || (open && undated.length))
+      unscheduled.push({
+        task,
+        own: !own,
+        checks: open ? undated : [],
+        pending,
+        hasTimelineControl: own || dated.length > 0,
+      });
+  }
+  return { scheduled, unscheduled };
+}

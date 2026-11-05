@@ -70,6 +70,7 @@ test("one tap cycles status and board drop changes status", async ({
   await page
     .getByRole("button", { name: "状態を変える：進行中。次の状態へ変更" })
     .click();
+  await showRetained(page);
   await expect(page.locator('[data-column="done"]')).toContainText(
     "状態を変える",
   );
@@ -108,6 +109,7 @@ test("gantt shares dates and task edits with kanban, filters and navigates", asy
   await bar.click();
   await page.locator('[data-status="done"]').click();
   await page.getByRole("button", { name: "変更を保存" }).click();
+  await showRetained(page);
   await expect(
     page.locator(".gantt-bar.done").filter({ hasText: "ガントの予定" }),
   ).toBeVisible();
@@ -414,37 +416,6 @@ test("two independent devices share tasks and status through the sync API", asyn
     await second.locator("#task-progress").selectOption("ahead");
     await second.locator('[data-status="done"]').click();
     await second.getByRole("button", { name: "変更を保存" }).click();
-    await expect(second.locator('[data-column="done"]')).toContainText(
-      "端末をまたぐタスク",
-    );
-    await settings(second);
-    await second
-      .getByRole("button", { name: "今すぐ同期", exact: true })
-      .click();
-    await expect(second.locator("#toast")).toContainText("同期しました");
-    await page.getByRole("button", { name: "今すぐ同期", exact: true }).click();
-    await expect
-      .poll(
-        () =>
-          doc.payload.tasks.find((t) => t.title === "端末をまたぐタスク")
-            .status,
-      )
-      .toBe("done");
-    await page.getByRole("button", { name: "閉じる", exact: true }).click();
-    await expect(page.locator('[data-column="done"]')).toContainText(
-      "端末をまたぐタスク",
-    );
-    expect(doc.payload.tasks.length).toBe(8);
-    await open(page, "端末をまたぐタスク");
-    await expect(page.locator("#task-progress")).toHaveValue("ahead");
-    await page.getByRole("button", { name: "閉じる", exact: true }).click();
-    await second.getByRole("button", { name: "閉じる", exact: true }).click();
-    await second
-      .getByRole("button", {
-        name: "端末をまたぐタスクをアーカイブ",
-        exact: true,
-      })
-      .click();
     await expect(
       second.getByRole("heading", { name: "端末をまたぐタスク", exact: true }),
     ).toHaveCount(0);
@@ -459,17 +430,45 @@ test("two independent devices share tasks and status through the sync API", asyn
             .archived,
       )
       .toBe(true);
-    await settings(page);
     await page.getByRole("button", { name: "今すぐ同期", exact: true }).click();
     await expect(page.locator("[data-connection]").first()).not.toContainText(
       "同期中",
     );
     await page.getByRole("button", { name: "閉じる", exact: true }).click();
-    if (test.info().project.name === "mobile") await menu(page);
-    await page.getByRole("button", { name: /^アーカイブ \d/ }).click();
+    await expect(
+      page.getByRole("heading", { name: "端末をまたぐタスク", exact: true }),
+    ).toHaveCount(0);
+    await showRetained(page);
+    const card = page
+      .locator(".task-card")
+      .filter({ hasText: "端末をまたぐタスク" });
+    await expect(card).toHaveAttribute("data-archived", "true");
+    await expect(card).toContainText("アーカイブ済み");
+    expect(doc.payload.tasks.length).toBe(8);
+    await open(page, "端末をまたぐタスク");
+    await expect(page.locator("#task-progress")).toHaveValue("ahead");
+    await expect(
+      page.getByLabel("同期する小項目の期限日", { exact: true }),
+    ).toHaveValue(addDays(dateKey(), 2));
+    await page.getByRole("button", { name: "閉じる", exact: true }).click();
+    await hideRetained(page);
+    await expect(card).toHaveCount(0);
+    expect(
+      (await workspace(page)).tasks.find(
+        (t) => t.title === "端末をまたぐタスク",
+      ).archived,
+    ).toBe(true);
+    await showArchive(page, test.info());
     await expect(
       page.locator(".archive-row").filter({ hasText: "端末をまたぐタスク" }),
     ).toBeVisible();
+    await page
+      .getByRole("button", {
+        name: "アーカイブしたまま一覧に表示",
+        exact: true,
+      })
+      .click();
+    await expect(card).toHaveAttribute("data-archived", "true");
   } finally {
     await ctx.close();
   }
@@ -732,7 +731,7 @@ test("month calendar uses one bar per weekly range and creates tasks on a select
     ),
   ).toBe(true);
 });
-test("completed tasks archive and restore with dates preserved", async ({
+test("completed tasks archive automatically, reveal without unarchiving, and explicitly resume with dates preserved", async ({
   page,
 }, info) => {
   await start(page);
@@ -743,32 +742,58 @@ test("completed tasks archive and restore with dates preserved", async ({
   await page
     .getByRole("button", { name: "保管するタスク：進行中。次の状態へ変更" })
     .click();
-  await page
-    .getByRole("button", { name: "保管するタスクをアーカイブ", exact: true })
-    .click();
   await expect(
     page.getByRole("heading", { name: "保管するタスク", exact: true }),
   ).toHaveCount(0);
   await page.reload();
-  await showArchive(page, info);
   await expect(
-    page.locator(".archive-row").filter({ hasText: "保管するタスク" }),
-  ).toBeVisible();
-  await page
-    .locator(".archive-row")
-    .filter({ hasText: "保管するタスク" })
-    .getByRole("button", { name: "元に戻す" })
-    .click();
-  await expect(
-    page.locator(".archive-row").filter({ hasText: "保管するタスク" }),
+    page.getByRole("heading", { name: "保管するタスク", exact: true }),
   ).toHaveCount(0);
+  expect(
+    (await workspace(page)).tasks.find((t) => t.title === "保管するタスク")
+      .archived,
+  ).toBe(true);
+  await showRetained(page);
+  const card = page.locator(".task-card").filter({ hasText: "保管するタスク" });
+  await expect(card).toHaveAttribute("data-archived", "true");
+  await expect(card).toContainText("アーカイブ済み");
+  await openGantt(page);
+  await expect(
+    page.getByLabel("保管するタスクのステータス", { exact: true }),
+  ).toHaveValue("done");
+  await page.getByRole("tab", { name: "カレンダー", exact: true }).click();
+  await expect(
+    page
+      .locator(".calendar-event")
+      .filter({ hasText: "保管するタスク" })
+      .first(),
+  ).toHaveAttribute("data-archived", "true");
+  await hideRetained(page);
+  await expect(
+    page.locator(".calendar-event").filter({ hasText: "保管するタスク" }),
+  ).toHaveCount(0);
+  expect(
+    (await workspace(page)).tasks.find((t) => t.title === "保管するタスク")
+      .archived,
+  ).toBe(true);
+  await showArchive(page, info);
+  const row = page
+    .locator(".archive-row")
+    .filter({ hasText: "保管するタスク" });
+  await expect(row).toBeVisible();
+  await row.getByRole("button", { name: "再開する", exact: true }).click();
+  await expect(row).toHaveCount(0);
   if (info.project.name === "mobile") await menu(page);
   await page.getByRole("button", { name: /^すべてのタスク \d/ }).click();
+  await page.getByRole("tab", { name: "かんばん", exact: true }).click();
   await open(page, "保管するタスク");
   await expect(page.locator("#task-start")).toHaveValue(dateKey());
-  await expect(page.locator('[data-status="done"]')).toHaveClass(/selected/);
+  await expect(page.locator('[data-status="todo"]')).toHaveClass(/selected/);
+  expect(
+    (await workspace(page)).tasks.find((t) => t.title === "保管するタスク")
+      .archived,
+  ).toBe(false);
 });
-
 test("sidebar toggles on desktop and mobile and keeps desktop preference", async ({
   page,
 }, info) => {
@@ -1025,6 +1050,7 @@ test("deadline colors appear in board, Gantt and calendar and clear on completio
   await page
     .getByRole("button", { name: "期限が近いタスク：進行中。次の状態へ変更" })
     .click();
+  await showRetained(page);
   await expect(card).not.toHaveClass(/deadline-(soon|overdue)/);
 });
 
@@ -1172,11 +1198,11 @@ test("Gantt shows checklist periods independently and can jump to a distant chec
   await expect(bar).toBeInViewport();
   await page
     .getByRole("checkbox", { name: "遠い予定の小項目を完了", exact: true })
-    .check();
+    .click();
   await expect(
     page.getByRole("checkbox", { name: "遠い予定の小項目を完了", exact: true }),
-  ).toBeChecked();
-  await expect(bar).toHaveClass(/done/);
+  ).toHaveCount(0);
+  await expect(bar).toHaveCount(0);
   await page.reload();
   await open(page, "親に日程がないタスク");
   await expect(
@@ -1200,6 +1226,8 @@ test("Gantt changes task status directly and preserves it across reload and boar
   await expect(select).toHaveValue("doing");
   await expect(page.locator("#modal")).not.toBeVisible();
   await select.selectOption("done");
+  await expect(select).toHaveCount(0);
+  await showRetained(page);
   await expect(select).toHaveValue("done");
   await page.reload();
   await expect(page.locator('[data-column="done"]')).toContainText(
@@ -1237,4 +1265,248 @@ test("restored theme keeps kanban cards compact and task details accessible", as
     path: `/tmp/taskly-restored-board-${test.info().project.name}.png`,
     fullPage: true,
   });
+});
+
+async function showRetained(page) {
+  const button = page.getByRole("button", {
+    name: "完了・アーカイブを表示",
+    exact: true,
+  });
+  if (await button.count()) await button.click();
+}
+async function hideRetained(page) {
+  const button = page.getByRole("button", {
+    name: "完了・アーカイブを非表示",
+    exact: true,
+  });
+  if (await button.count()) await button.click();
+}
+async function workspace(page) {
+  return page.evaluate(async () => {
+    const db = await new Promise((resolve, reject) => {
+      const q = indexedDB.open("taskly-data", 1);
+      q.onsuccess = () => resolve(q.result);
+      q.onerror = () => reject(q.error);
+    });
+    try {
+      return await new Promise((resolve, reject) => {
+        const q = db
+          .transaction("documents")
+          .objectStore("documents")
+          .get("workspace");
+        q.onsuccess = () => resolve(q.result);
+        q.onerror = () => reject(q.error);
+      });
+    } finally {
+      db.close();
+    }
+  });
+}
+
+test("Gantt ribbons and bulk buttons control both dated and undated pending checklist entries", async ({
+  page,
+}) => {
+  const s = initialState();
+  s.tasks = s.tasks.slice(0, 3);
+  for (const [i, t] of s.tasks.entries()) {
+    t.title = "開閉タスク" + i;
+    t.status = "todo";
+    t.archived = false;
+    t.start = dateKey();
+    t.due = addDays(dateKey(), 2);
+  }
+  s.tasks[0].checklist = [
+    {
+      id: "dated-a",
+      text: "日程ありA",
+      done: false,
+      start: dateKey(),
+      due: addDays(dateKey(), 1),
+    },
+    { id: "undated-a", text: "日程なしA", done: false, start: "", due: "" },
+    {
+      id: "done-dated",
+      text: "完了した予定",
+      done: true,
+      start: dateKey(),
+      due: dateKey(),
+    },
+    {
+      id: "done-undated",
+      text: "完了した未設定",
+      done: true,
+      start: "",
+      due: "",
+    },
+  ];
+  s.tasks[1].checklist = [
+    {
+      id: "dated-b",
+      text: "日程ありB",
+      done: false,
+      start: dateKey(),
+      due: dateKey(),
+    },
+  ];
+  s.tasks[2].start = "";
+  s.tasks[2].due = "";
+  s.tasks[2].checklist = [
+    { id: "undated-c", text: "日程なしC", done: false, start: "", due: "" },
+  ];
+  await seedState(page, s);
+  await start(page);
+  await openGantt(page);
+  await expect(page.locator('[data-row-check="dated-a"]')).toBeVisible();
+  await expect(
+    page.locator('.gantt-grid [data-row-check="undated-a"]'),
+  ).toHaveCount(0);
+  await expect(
+    page.locator('[data-unscheduled-check="undated-a"]'),
+  ).toBeVisible();
+  await expect(
+    page.locator(`[data-unscheduled-task="${s.tasks[2].id}"]`),
+  ).toBeVisible();
+  await expect(
+    page.locator(".gantt-grid").getByText("期間未設定", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.locator(
+      '[data-row-check="done-dated"],[data-unscheduled-check="done-undated"]',
+    ),
+  ).toHaveCount(0);
+  await page
+    .getByRole("button", {
+      name: "開閉タスク0のチェックリストを非表示",
+      exact: true,
+    })
+    .click();
+  await expect(page.locator('[data-row-check="dated-a"]')).toHaveCount(0);
+  await expect(
+    page.locator('[data-unscheduled-check="undated-a"]'),
+  ).toHaveCount(0);
+  await expect(page.locator('[data-row-check="dated-b"]')).toBeVisible();
+  await page
+    .getByRole("button", { name: "すべてのチェックリストを表示", exact: true })
+    .click();
+  await expect(page.locator('[data-row-check="dated-a"]')).toBeVisible();
+  await expect(
+    page.locator('[data-unscheduled-check="undated-c"]'),
+  ).toBeVisible();
+  await page
+    .getByRole("button", {
+      name: "すべてのチェックリストを非表示",
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.locator("[data-row-check],[data-unscheduled-check]"),
+  ).toHaveCount(0);
+  await page.reload();
+  await openGantt(page);
+  await expect(
+    page.locator("[data-row-check],[data-unscheduled-check]"),
+  ).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "すべてのチェックリストを表示", exact: true })
+    .click();
+  await expect(page.locator('[data-row-check="dated-a"]')).toBeVisible();
+  await expect(
+    page.locator('[data-unscheduled-check="undated-a"]'),
+  ).toBeVisible();
+  await page.screenshot({
+    path: `/tmp/taskly-folded-planning-${test.info().project.name}.png`,
+    fullPage: true,
+  });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+});
+
+test("completed checklist entries disappear in Gantt and can be restored from task details", async ({
+  page,
+}) => {
+  await start(page);
+  await create(page, "チェック完了のテスト");
+  await page.getByPlaceholder("チェック項目を追加…").fill("下の未設定を完了");
+  await page.getByPlaceholder("チェック項目を追加…").press("Enter");
+  await page.getByRole("button", { name: "タスクを作成", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "チェック完了のテスト", exact: true }),
+  ).toBeVisible();
+  await openGantt(page);
+  await page
+    .getByRole("checkbox", { name: "下の未設定を完了を完了", exact: true })
+    .click();
+  await expect(
+    page.getByRole("checkbox", { name: "下の未設定を完了を完了", exact: true }),
+  ).toHaveCount(0);
+  const t = (await workspace(page)).tasks.find(
+    (t) => t.title === "チェック完了のテスト",
+  );
+  expect(t.checklist[0].done).toBe(true);
+  expect(t.archived).toBe(false);
+  await page.reload();
+  await open(page, "チェック完了のテスト");
+  await expect(
+    page.getByLabel("下の未設定を完了を完了", { exact: true }),
+  ).toBeChecked();
+  await page.getByLabel("下の未設定を完了を完了", { exact: true }).uncheck();
+  await page.getByRole("button", { name: "変更を保存", exact: true }).click();
+  await openGantt(page);
+  await expect(
+    page.getByRole("checkbox", { name: "下の未設定を完了を完了", exact: true }),
+  ).toBeVisible();
+});
+
+test("legacy and newly created completed tasks auto-archive while reveal remains a view-only preference", async ({
+  page,
+}) => {
+  const s = initialState();
+  s.tasks = s.tasks.slice(0, 1);
+  s.tasks[0].title = "以前に完了したタスク";
+  s.tasks[0].status = "done";
+  s.tasks[0].archived = false;
+  const ts = s.tasks[0].updatedAt;
+  await seedState(page, s);
+  await start(page);
+  await expect(
+    page.getByRole("heading", { name: "以前に完了したタスク", exact: true }),
+  ).toHaveCount(0);
+  let saved = await workspace(page);
+  expect(saved.tasks[0].archived).toBe(true);
+  expect(saved.tasks[0].updatedAt).toBe(ts);
+  await showRetained(page);
+  await expect(
+    page.locator(".task-card").filter({ hasText: "以前に完了したタスク" }),
+  ).toHaveAttribute("data-archived", "true");
+  await hideRetained(page);
+  await create(page, "最初から完了");
+  await page.getByPlaceholder("チェック項目を追加…").fill("データは残る");
+  await page.getByPlaceholder("チェック項目を追加…").press("Enter");
+  await page.locator('[data-status="done"]').click();
+  await page.getByRole("button", { name: "タスクを作成", exact: true }).click();
+  await expect(page.locator("#modal")).not.toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "最初から完了", exact: true }),
+  ).toHaveCount(0);
+  const before = (await workspace(page)).tasks.find(
+    (t) => t.title === "最初から完了",
+  );
+  expect(before.archived).toBe(true);
+  await showRetained(page);
+  await expect(
+    page.locator(".task-card").filter({ hasText: "最初から完了" }),
+  ).toHaveAttribute("data-archived", "true");
+  await hideRetained(page);
+  await showRetained(page);
+  await page.reload();
+  await expect(
+    page.locator(".task-card").filter({ hasText: "最初から完了" }),
+  ).toHaveAttribute("data-archived", "true");
+  const after = (await workspace(page)).tasks.find(
+    (t) => t.title === "最初から完了",
+  );
+  expect(after).toEqual(before);
 });

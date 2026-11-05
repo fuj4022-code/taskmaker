@@ -4410,3 +4410,293 @@ dialog.task-drawer {
   padding-right: 5px;
   white-space: nowrap;
 }
+/* Checklist ribbons and retained archive visibility. */
+.retained-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: flex-end;
+  margin: -8px 0 16px;
+  flex-wrap: wrap;
+}
+.retained-toolbar > span {
+  font-size: 10px;
+  color: #819789;
+}
+.button.retained-active {
+  background: #e8f2eb;
+  border-color: #accbb6;
+  color: #477a58;
+}
+.archive-badge {
+  font-size: 8px;
+  line-height: 1.5;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: #eef1ef;
+  color: #879a8b;
+  white-space: nowrap;
+}
+.archived-item.task-card {
+  border-style: dashed;
+}
+.gantt-archive-label {
+  font-size: 8px;
+  line-height: 1.3;
+  color: #8a9e8e;
+}
+.gantt-checklist-ribbon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  min-width: 25px;
+  height: 24px;
+  padding: 3px 2px;
+  border: 1px solid #dce8df;
+  border-radius: 4px;
+  background: #f3f8f3;
+  color: #789783;
+  font-size: 9px;
+  flex-shrink: 0;
+}
+.gantt-checklist-ribbon > .icon {
+  width: 10px;
+  height: 10px;
+  transition: transform 0.12s;
+}
+.gantt-checklist-ribbon.expanded > .icon {
+  transform: rotate(90deg);
+}
+.gantt-checklist-ribbon:hover {
+  background: #e7f1e8;
+}
+.gantt-checklist-ribbon:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.gantt-checklist-group {
+  display: contents;
+}
+.gantt-checklist-context {
+  grid-column: 1/3;
+  background: #f2f6f0;
+  border-bottom: 1px solid #e0e9df;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  position: relative;
+}
+.gantt-context-content {
+  position: sticky;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  width: var(--task-width);
+  padding: 5px 9px;
+  min-height: 34px;
+}
+.gantt-context-content > button:not(.gantt-checklist-ribbon) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 0;
+  background: none;
+  text-align: left;
+  font-size: 11px;
+  color: #68816e;
+  padding: 0;
+  flex: 1;
+}
+.gantt-context-content > span {
+  font-size: 8px;
+  color: #8ca18f;
+  white-space: nowrap;
+}
+.gantt-controls #toggle-all-checklists {
+  font-size: 10px;
+}
+.gantt-unscheduled {
+  padding: 16px 18px;
+  border-top: 1px solid #e3eae2;
+  background: #fcfdfb;
+}
+.gantt-unscheduled > h3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 550;
+  color: #758f79;
+  margin: 0 0 12px;
+}
+.gantt-unscheduled > h3 > .icon {
+  width: 15px;
+  height: 15px;
+}
+.gantt-unscheduled > h3 > span {
+  font-size: 9px;
+  color: #97aa98;
+  margin-left: 2px;
+}
+.unscheduled-group {
+  border-top: 1px solid #e8eee7;
+  padding: 9px 0;
+}
+.unscheduled-group:first-of-type {
+  border-top: 0;
+}
+.unscheduled-task,
+.unscheduled-check {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 35px;
+}
+.unscheduled-task-name {
+  background: none;
+  border: 0;
+  text-align: left;
+  min-width: 0;
+  flex: 1;
+  padding: 4px 0;
+  color: #637a69;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  line-height: 1.7;
+}
+.unscheduled-check {
+  padding-left: 31px;
+  border-top: 1px solid #f0f3ee;
+}
+.unscheduled-check > input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: #639b74;
+  flex-shrink: 0;
+}
+.unscheduled-owner {
+  font-size: 11px;
+  color: #829c86;
+  padding: 6px 0;
+}
+.unscheduled-owner > span {
+  font-size: 9px;
+  color: #a1b0a1;
+  margin-left: 5px;
+}
+.unscheduled-task > .button,
+.unscheduled-check > .button {
+  font-size: 9px;
+  min-height: 28px;
+  padding: 4px 8px;
+}
+.gantt-section {
+  --task-width: 305px;
+}
+.gantt-context-content > .gantt-checklist-ribbon {
+  min-width: 28px;
+}
+.gantt-visible-period {
+  font-size: 11px;
+}
+.gantt-task > .gantt-checklist-ribbon {
+  margin-left: -2px;
+}
+.card-compact .card-meta > .archive-badge {
+  font-size: 7px;
+  padding: 2px 4px;
+}
+.archive-row > .button {
+  font-size: 10px;
+}
+.retained-toolbar .icon {
+  width: 14px;
+  height: 14px;
+}
+@media (max-width: 760px) {
+  .gantt-section {
+    --task-width: 230px;
+  }
+  .retained-toolbar {
+    justify-content: flex-start;
+    margin: 0 0 13px;
+  }
+  .retained-toolbar > span {
+    font-size: 9px;
+  }
+  .gantt-context-content {
+    gap: 5px;
+  }
+  .gantt-context-content > span {
+    display: none;
+  }
+}
+@media (max-width: 560px) {
+  .gantt-section {
+    --task-width: 220px;
+  }
+  .gantt-title.gantt-task {
+    gap: 3px;
+  }
+  .gantt-checklist-ribbon {
+    min-width: 24px;
+    height: 25px;
+    font-size: 8px;
+  }
+  .gantt-checklist-ribbon > .icon {
+    width: 9px;
+  }
+  .gantt-status-select {
+    width: 58px;
+    font-size: 8px;
+  }
+  .retained-toolbar {
+    gap: 6px;
+  }
+  .retained-toolbar .button {
+    font-size: 10px;
+  }
+  .retained-toolbar > span {
+    display: block;
+    width: 100%;
+    padding-left: 2px;
+  }
+  .gantt-controls #toggle-all-checklists {
+    font-size: 9px;
+    min-height: 30px;
+  }
+  .gantt-unscheduled {
+    padding: 14px 12px;
+  }
+  .gantt-unscheduled > h3 {
+    font-size: 11px;
+  }
+  .unscheduled-task,
+  .unscheduled-check {
+    gap: 6px;
+  }
+  .unscheduled-task-name {
+    font-size: 11px;
+  }
+  .unscheduled-task > .button,
+  .unscheduled-check > .button {
+    font-size: 8px;
+    padding: 4px 6px;
+  }
+  .unscheduled-check {
+    padding-left: 14px;
+  }
+  .unscheduled-task > .archive-badge {
+    display: none;
+  }
+  .card-compact .card-meta > .archive-badge {
+    font-size: 7px;
+  }
+  .gantt-context-content > button:not(.gantt-checklist-ribbon) {
+    font-size: 10px;
+  }
+}
