@@ -16,6 +16,7 @@ import {
   validState,
 } from "./model.js";
 import { load, save } from "./storage.js";
+import { APP_VERSION } from "./version.js";
 import {
   timelineRunway,
   timelineFrom,
@@ -162,6 +163,7 @@ function mutate(fn, { silent = false, remote = false } = {}) {
     const next = structuredClone(state);
     fn(next);
     autoArchiveCompleted(next);
+    if (JSON.stringify(next) === JSON.stringify(state)) return state;
     await save(next);
     state = next;
     if (!silent) render();
@@ -230,8 +232,84 @@ function updateConnection() {
 function retainedVisibilityControl() {
   return `<div class="retained-toolbar"><button class="button small ${includeArchived && !archiveMode ? "retained-active" : ""}" data-action="toggle-retained" ${!archiveMode ? `aria-pressed="${includeArchived}"` : ""}>${icon("archive")}${archiveMode ? "アーカイブしたまま一覧に表示" : includeArchived ? "完了・アーカイブを非表示" : "完了・アーカイブを表示"}</button>${includeArchived && !archiveMode ? "<span>アーカイブ状態を保ったまま表示中</span>" : ""}</div>`;
 }
+let boardPosition = 0,
+  boardPointerActive = false,
+  boardTouchActive = false,
+  boardScrolling = false,
+  boardRenderPending = false,
+  boardSettleTimer;
+function settleBoard() {
+  clearTimeout(boardSettleTimer);
+  boardSettleTimer = setTimeout(() => {
+    if (boardPointerActive || boardTouchActive) return;
+    boardScrolling = false;
+    if (boardRenderPending) {
+      boardRenderPending = false;
+      render();
+    }
+  }, 200);
+}
+window.addEventListener("pointerup", () => {
+  if (boardPointerActive) {
+    boardPointerActive = false;
+    settleBoard();
+  }
+});
+window.addEventListener("pointercancel", () => {
+  if (boardPointerActive) {
+    boardPointerActive = false;
+    settleBoard();
+  }
+});
+window.addEventListener(
+  "touchend",
+  () => {
+    boardTouchActive = false;
+    settleBoard();
+  },
+  { passive: true },
+);
+window.addEventListener(
+  "touchcancel",
+  () => {
+    boardTouchActive = false;
+    settleBoard();
+  },
+  { passive: true },
+);
+function bindBoardPosition() {
+  const board = app.querySelector(".board");
+  if (!board) return;
+  board.addEventListener(
+    "touchstart",
+    () => {
+      boardTouchActive = true;
+    },
+    { passive: true },
+  );
+  board.addEventListener("pointerdown", () => {
+    boardPointerActive = true;
+  });
+  board.addEventListener(
+    "scroll",
+    () => {
+      if (!board.isConnected) return;
+      boardPosition = board.scrollLeft;
+      boardScrolling = true;
+      settleBoard();
+    },
+    { passive: true },
+  );
+}
 function render() {
   if (activeResize) return;
+  if (boardPointerActive || boardTouchActive || boardScrolling) {
+    boardRenderPending = true;
+    return;
+  }
+  boardRenderPending = false;
+  const previousBoard = app.querySelector(".board");
+  if (previousBoard) boardPosition = previousBoard.scrollLeft;
   const previous = app.querySelector(".gantt-scroll");
   const scroll = previous
     ? { left: previous.scrollLeft, top: previous.scrollTop }
@@ -253,8 +331,17 @@ function render() {
     overdue = list.filter(
       (t) => t.due && t.due < dateKey() && t.status !== "done",
     ).length;
-  app.innerHTML = `<div class="layout ${navOpen ? "nav-open" : ""} ${sidebarHidden ? "sidebar-hidden" : ""}"><button class="nav-shade" data-action="nav" aria-label="メニューを閉じる"></button><aside class="sidebar" ${window.matchMedia("(max-width:760px)").matches ? (!navOpen ? "inert" : "") : sidebarHidden ? "inert" : ""}><a href="#" class="brand" data-action="home"><span class="brand-mark">${icon("leaf")}</span>taskly<span class="brand-dot">.</span></a><button class="icon-button sidebar-close" data-action="nav" aria-label="サイドバーを閉じる">${icon("close")}</button><div class="workspace"><span class="workspace-avatar">M</span><div><strong>マイワークスペース</strong><small>自分らしく、進めよう</small></div><span class="workspace-chevron">${icon("down")}</span></div><p class="nav-label">ワークスペース</p><button class="nav-item ${!archiveMode ? "active" : ""}" data-action="home">${icon("grid")}<span>すべてのタスク</span><span class="nav-count">${all.length}</span></button><button class="nav-item ${archiveMode ? "active" : ""}" data-action="archive">${icon("archive")}<span>アーカイブ</span><span class="nav-count">${activeTasks(state, { includeArchived: true }).filter((t) => t.archived).length}</span></button><div class="sidebar-bottom"><div class="little-note"><span>${icon("sun")}</span><strong>小さな一歩が、大きな前進。</strong><p>今日の「できた」を増やそう。</p><div class="note-art"><i></i><i></i><i></i></div></div><button class="nav-item" data-action="settings">${icon("settings")}<span>設定・データ同期</span></button><div class="profile"><span class="profile-avatar">M</span><div><strong>マイアカウント</strong><small>${getAuth() ? "クラウド同期が有効" : "ローカルワークスペース"}</small></div><span class="online-dot"></span></div></div></aside><main><header class="topbar"><button class="icon-button sidebar-toggle" data-action="nav" aria-label="メニュー" aria-expanded="${window.matchMedia("(max-width:760px)").matches ? navOpen : !sidebarHidden}" title="サイドバーを開く・閉じる">${icon("menu")}</button><div class="breadcrumb">ワークスペース ${icon("chevron")} <span>${esc(title)}</span></div><div class="top-actions"><span class="connection"><span class="online-dot"></span><span data-connection>${connectionText()}</span></span><button class="icon-button" data-action="settings" aria-label="同期と設定">${icon("cloud")}</button><span class="top-avatar">M</span></div></header><div class="content"><div class="page-heading"><div><div class="eyebrow">YOUR SPACE, YOUR PACE</div><div class="project-title-line"><h1>${esc(title)}<span class="heading-dot" style="--dot:#4d8b78"></span></h1></div><p>今日やることも、これからの計画も。ここから始めよう。</p></div>${archiveMode ? `<span class="archive-heading-note">完了したタスクを保管しています</span>` : `<button class="button primary new-task" data-action="new">${icon("plus")}タスクを追加</button>`}</div><div class="stats"><div class="stat"><span class="stat-icon total">${icon("list")}</span><div><span>すべてのタスク</span><strong>${list.length}<small>件</small></strong></div><div class="mini-bars"><i></i><i></i><i></i><i></i><i></i></div></div><div class="stat"><span class="stat-icon progress">${icon("clock")}</span><div><span>進行中</span><strong>${list.filter((t) => t.status === "doing").length}<small>件</small></strong></div><span class="stat-note">少しずつ前へ</span></div><div class="stat"><span class="stat-icon complete">${icon("check")}</span><div><span>完了</span><strong>${done}<small>件</small></strong></div><span class="completion-ring" style="--progress:${list.length ? (done / list.length) * 100 : 0}%"><span>${list.length ? Math.round((done / list.length) * 100) : 0}%</span></span></div><div class="stat"><span class="stat-icon deadline">${icon("calendar")}</span><div><span>期限超過</span><strong>${overdue}<small>件</small></strong></div><span class="stat-note">${overdue ? "日程を見直そう" : "順調なペースです"}</span></div></div>${retainedVisibilityControl()}<div class="view-toolbar">${archiveMode ? '<div class="archive-filter-label">保管済みタスク</div>' : `<div class="view-tabs" role="tablist" aria-label="表示形式"><button role="tab" aria-selected="${view === "board"}" class="${view === "board" ? "selected" : ""}" data-view="board">${icon("board")}かんばん</button><button role="tab" aria-selected="${view === "gantt"}" class="${view === "gantt" ? "selected" : ""}" data-view="gantt">${icon("gantt")}ガントチャート</button><button role="tab" aria-selected="${view === "calendar"}" class="${view === "calendar" ? "selected" : ""}" data-view="calendar">${icon("calendar")}カレンダー</button></div>`}<div class="toolbar-right"><label class="search-box">${icon("search")}<input id="search" placeholder="タスクを検索…" aria-label="タスクを検索" value="${esc(search)}"><kbd>/</kbd></label><label class="filter-select"><span class="sr-only">状態で絞り込み</span><select id="status-filter"><option value="">すべての状態</option>${STATUSES.map((s) => `<option value="${s.id}" ${s.id === statusFilter ? "selected" : ""}>${esc(statusLabel(s.id))}</option>`).join("")}</select>${icon("down")}</label></div></div><div class="tag-toolbar"><div class="tag-filters">${icon("tag")}<button class="tag-filter ${!tag ? "selected" : ""}" data-tag="">すべて</button>${tags.map((t) => `<button class="tag-filter ${tag === t ? "selected" : ""}" data-tag="${esc(t)}">${esc(t)}</button>`).join("")}</div><span class="result-count">${list.length} 件のタスク</span></div>${archiveMode ? archiveList(list) : view === "board" ? board(list) : view === "gantt" ? gantt(list) : calendar(list)}${!archiveMode ? '<p class="deadline-legend"><span class="deadline-key soon"></span>期限まで3日以内 <span class="deadline-key overdue"></span>期限超過</p>' : ""}<footer class="page-footer"><span>${icon("check")}変更はこの端末に自動保存されます</span><span>Make room for what matters.</span></footer></div></main></div>`;
+  app.innerHTML = `<div class="layout ${navOpen ? "nav-open" : ""} ${sidebarHidden ? "sidebar-hidden" : ""}"><button class="nav-shade" data-action="nav" aria-label="メニューを閉じる"></button><aside class="sidebar" ${window.matchMedia("(max-width:760px)").matches ? (!navOpen ? "inert" : "") : sidebarHidden ? "inert" : ""}><a href="#" class="brand" data-action="home"><span class="brand-mark">${icon("leaf")}</span>taskly<span class="brand-dot">.</span></a><button class="icon-button sidebar-close" data-action="nav" aria-label="サイドバーを閉じる">${icon("close")}</button><div class="workspace"><span class="workspace-avatar">M</span><div><strong>マイワークスペース</strong><small>自分らしく、進めよう</small></div><span class="workspace-chevron">${icon("down")}</span></div><p class="nav-label">ワークスペース</p><button class="nav-item ${!archiveMode ? "active" : ""}" data-action="home">${icon("grid")}<span>すべてのタスク</span><span class="nav-count">${all.length}</span></button><button class="nav-item ${archiveMode ? "active" : ""}" data-action="archive">${icon("archive")}<span>アーカイブ</span><span class="nav-count">${activeTasks(state, { includeArchived: true }).filter((t) => t.archived).length}</span></button><div class="sidebar-bottom"><div class="little-note"><span>${icon("sun")}</span><strong>小さな一歩が、大きな前進。</strong><p>今日の「できた」を増やそう。</p><div class="note-art"><i></i><i></i><i></i></div></div><button class="nav-item" data-action="settings">${icon("settings")}<span>設定・データ同期</span></button><div class="profile"><span class="profile-avatar">M</span><div><strong>マイアカウント</strong><small>${getAuth() ? "クラウド同期が有効" : "ローカルワークスペース"}</small></div><span class="online-dot"></span></div></div></aside><main><header class="topbar"><button class="icon-button sidebar-toggle" data-action="nav" aria-label="メニュー" aria-expanded="${window.matchMedia("(max-width:760px)").matches ? navOpen : !sidebarHidden}" title="サイドバーを開く・閉じる">${icon("menu")}</button><div class="breadcrumb">ワークスペース ${icon("chevron")} <span>${esc(title)}</span></div><div class="top-actions"><span class="connection"><span class="online-dot"></span><span data-connection>${connectionText()}</span></span><button class="icon-button" data-action="settings" aria-label="同期と設定">${icon("cloud")}</button><span class="top-avatar">M</span></div></header><div class="content"><div class="page-heading"><div><div class="eyebrow">YOUR SPACE, YOUR PACE</div><div class="project-title-line"><h1>${esc(title)}<span class="heading-dot" style="--dot:#4d8b78"></span></h1></div><p>今日やることも、これからの計画も。ここから始めよう。</p></div>${archiveMode ? `<span class="archive-heading-note">完了したタスクを保管しています</span>` : `<button class="button primary new-task" data-action="new">${icon("plus")}タスクを追加</button>`}</div><div class="stats"><div class="stat"><span class="stat-icon total">${icon("list")}</span><div><span>すべてのタスク</span><strong>${list.length}<small>件</small></strong></div><div class="mini-bars"><i></i><i></i><i></i><i></i><i></i></div></div><div class="stat"><span class="stat-icon progress">${icon("clock")}</span><div><span>進行中</span><strong>${list.filter((t) => t.status === "doing").length}<small>件</small></strong></div><span class="stat-note">少しずつ前へ</span></div><div class="stat"><span class="stat-icon complete">${icon("check")}</span><div><span>完了</span><strong>${done}<small>件</small></strong></div><span class="completion-ring" style="--progress:${list.length ? (done / list.length) * 100 : 0}%"><span>${list.length ? Math.round((done / list.length) * 100) : 0}%</span></span></div><div class="stat"><span class="stat-icon deadline">${icon("calendar")}</span><div><span>期限超過</span><strong>${overdue}<small>件</small></strong></div><span class="stat-note">${overdue ? "日程を見直そう" : "順調なペースです"}</span></div></div>${retainedVisibilityControl()}<div class="view-toolbar">${archiveMode ? '<div class="archive-filter-label">保管済みタスク</div>' : `<div class="view-tabs" role="tablist" aria-label="表示形式"><button role="tab" aria-selected="${view === "board"}" class="${view === "board" ? "selected" : ""}" data-view="board">${icon("board")}かんばん</button><button role="tab" aria-selected="${view === "gantt"}" class="${view === "gantt" ? "selected" : ""}" data-view="gantt">${icon("gantt")}ガントチャート</button><button role="tab" aria-selected="${view === "calendar"}" class="${view === "calendar" ? "selected" : ""}" data-view="calendar">${icon("calendar")}カレンダー</button></div>`}<div class="toolbar-right"><label class="search-box">${icon("search")}<input id="search" placeholder="タスクを検索…" aria-label="タスクを検索" value="${esc(search)}"><kbd>/</kbd></label><label class="filter-select"><span class="sr-only">状態で絞り込み</span><select id="status-filter"><option value="">すべての状態</option>${STATUSES.map((s) => `<option value="${s.id}" ${s.id === statusFilter ? "selected" : ""}>${esc(statusLabel(s.id))}</option>`).join("")}</select>${icon("down")}</label></div></div><div class="tag-toolbar"><div class="tag-filters">${icon("tag")}<button class="tag-filter ${!tag ? "selected" : ""}" data-tag="">すべて</button>${tags.map((t) => `<button class="tag-filter ${tag === t ? "selected" : ""}" data-tag="${esc(t)}">${esc(t)}</button>`).join("")}</div><span class="result-count">${list.length} 件のタスク</span></div>${archiveMode ? archiveList(list) : view === "board" ? board(list) : view === "gantt" ? gantt(list) : calendar(list)}${!archiveMode ? '<p class="deadline-legend"><span class="deadline-key soon"></span>期限まで3日以内 <span class="deadline-key overdue"></span>期限超過</p>' : ""}<footer class="page-footer"><span>${icon("check")}変更はこの端末に自動保存されます</span><span class="app-version" data-app-version>Taskly v${APP_VERSION}</span></footer></div></main></div>`;
 
+  const boardViewport = app.querySelector(".board");
+  if (boardViewport) {
+    boardViewport.style.scrollSnapType = "none";
+    boardViewport.scrollLeft = boardPosition;
+    requestAnimationFrame(() => {
+      if (boardViewport.isConnected)
+        boardViewport.style.removeProperty("scroll-snap-type");
+    });
+  }
   bind();
   const scroller = app.querySelector(".gantt-scroll");
   if (scroller) {
@@ -787,6 +874,7 @@ function renameColumns(focusId = "todo") {
   modal.querySelector(`[name="${focusId}"]`).focus();
 }
 function bind() {
+  bindBoardPosition();
   bindSchedule();
   app
     .querySelectorAll("[data-rename-column]")
@@ -1279,7 +1367,7 @@ function settings() {
   const config = getConfig(),
     auth = getAuth();
   showModal(
-    `<div class="simple-modal settings-modal"><header><div><p class="eyebrow">STAY CONNECTED</p><h2>設定・データ同期</h2></div><button class="icon-button" data-close aria-label="閉じる">${icon("close")}</button></header><div class="settings-scroll"><div class="local-banner">${icon("check")}<div><strong>オフラインでも、いつものように。</strong><p>タスクと画像はこの端末に保存されます。初回表示後はネットがなくても利用できます。</p></div></div><h3>${icon("cloud")}端末間の同期</h3><p>Windows・Chromebook・Android・iPadで、同じ公開URLとアカウントを使って共有できます。</p><p><a class="guide-link" href="https://github.com/fuj4022-code/taskmaker/blob/main/docs/SHARING.md" target="_blank" rel="noopener noreferrer">初心者向け・端末間共有ガイドを開く ↗</a></p><details><summary>はじめて接続する場合</summary><ol><li>自分のSupabaseプロジェクトを作り、リポジトリの <code>supabase.sql</code> をSQL Editorで実行します。</li><li>Email / Password認証を有効にし、下でProject URLと公開用キーを保存します。service_roleキーは使用しないでください。</li><li>アカウントを作成し、確認メールを開いてログインします。すべての端末で同じ設定を使ってください。</li></ol><p>タスク単位で最新の更新を採用します。同じタスクを同時編集した場合は後の変更が優先されます。端末の時計を自動設定にしてください。</p></details><form id="cloud-config"><label class="field">Project URL<input name="url" type="url" placeholder="https://your-project.supabase.co" value="${esc(config?.url || "")}" required></label><label class="field">Publishable key / anon key<input name="key" type="password" placeholder="公開用キー" value="${esc(config?.key || "")}" required autocomplete="off"></label><button class="button" type="submit">接続設定を保存</button></form>${auth ? `<div class="signed-in"><span>${icon("check")}${esc(auth.user?.email || "ログイン中")}</span><button class="button small" id="logout">ログアウト</button></div><button class="button primary" id="sync-now">${icon("cloud")}今すぐ同期</button><p class="settings-status" data-connection>${esc(connectionText())}</p>` : `<form id="login-form"><div class="divider"></div><label class="field">メールアドレス<input name="email" type="email" required autocomplete="email"></label><label class="field">パスワード<input name="password" type="password" minlength="8" required autocomplete="current-password"></label><div class="auth-actions"><button class="button primary" type="submit">ログイン</button><button class="button" type="button" id="signup">アカウントを作成</button></div></form>`}<p id="settings-error" class="form-error" role="status"></p><div class="divider"></div><h3>${icon("download")}バックアップ</h3><p>画像・チェックリストも含めてJSONファイルに保存します。ブラウザーのデータを消す前に書き出してください。</p><div class="backup-actions"><button class="button" id="export">${icon("download")}書き出す</button><label class="button">${icon("upload")}読み込む<input id="import-file" type="file" accept="application/json,.json" hidden></label></div><p class="fine-print">読み込みは既存データと統合します。画像を含むため、ファイルは大切に保管してください。</p><div class="divider"></div><h3>アプリとして使う</h3><p>HTTPSの公開先を開き、Chromeの「アプリをインストール」、iPadのSafariの「ホーム画面に追加」から利用できます。</p><button class="button" id="request-persist">端末内データの保持をリクエスト</button><p id="persist-result" class="fine-print"></p></div></div>`,
+    `<div class="simple-modal settings-modal"><header><div><p class="eyebrow">STAY CONNECTED</p><h2>設定・データ同期</h2><p class="app-version" data-app-version>Taskly v${APP_VERSION}</p></div><button class="icon-button" data-close aria-label="閉じる">${icon("close")}</button></header><div class="settings-scroll"><div class="local-banner">${icon("check")}<div><strong>オフラインでも、いつものように。</strong><p>タスクと画像はこの端末に保存されます。初回表示後はネットがなくても利用できます。</p></div></div><h3>${icon("cloud")}端末間の同期</h3><p>Windows・Chromebook・Android・iPadで、同じ公開URLとアカウントを使って共有できます。</p><p><a class="guide-link" href="https://github.com/fuj4022-code/taskmaker/blob/main/docs/SHARING.md" target="_blank" rel="noopener noreferrer">初心者向け・端末間共有ガイドを開く ↗</a></p><details><summary>はじめて接続する場合</summary><ol><li>自分のSupabaseプロジェクトを作り、リポジトリの <code>supabase.sql</code> をSQL Editorで実行します。</li><li>Email / Password認証を有効にし、下でProject URLと公開用キーを保存します。service_roleキーは使用しないでください。</li><li>アカウントを作成し、確認メールを開いてログインします。すべての端末で同じ設定を使ってください。</li></ol><p>タスク単位で最新の更新を採用します。同じタスクを同時編集した場合は後の変更が優先されます。端末の時計を自動設定にしてください。</p></details><form id="cloud-config"><label class="field">Project URL<input name="url" type="url" placeholder="https://your-project.supabase.co" value="${esc(config?.url || "")}" required></label><label class="field">Publishable key / anon key<input name="key" type="password" placeholder="公開用キー" value="${esc(config?.key || "")}" required autocomplete="off"></label><button class="button" type="submit">接続設定を保存</button></form>${auth ? `<div class="signed-in"><span>${icon("check")}${esc(auth.user?.email || "ログイン中")}</span><button class="button small" id="logout">ログアウト</button></div><button class="button primary" id="sync-now">${icon("cloud")}今すぐ同期</button><p class="settings-status" data-connection>${esc(connectionText())}</p>` : `<form id="login-form"><div class="divider"></div><label class="field">メールアドレス<input name="email" type="email" required autocomplete="email"></label><label class="field">パスワード<input name="password" type="password" minlength="8" required autocomplete="current-password"></label><div class="auth-actions"><button class="button primary" type="submit">ログイン</button><button class="button" type="button" id="signup">アカウントを作成</button></div></form>`}<p id="settings-error" class="form-error" role="status"></p><div class="divider"></div><h3>${icon("download")}バックアップ</h3><p>画像・チェックリストも含めてJSONファイルに保存します。ブラウザーのデータを消す前に書き出してください。</p><div class="backup-actions"><button class="button" id="export">${icon("download")}書き出す</button><label class="button">${icon("upload")}読み込む<input id="import-file" type="file" accept="application/json,.json" hidden></label></div><p class="fine-print">読み込みは既存データと統合します。画像を含むため、ファイルは大切に保管してください。</p><div class="divider"></div><h3>アプリとして使う</h3><p>HTTPSの公開先を開き、Chromeの「アプリをインストール」、iPadのSafariの「ホーム画面に追加」から利用できます。</p><button class="button" id="request-persist">端末内データの保持をリクエスト</button><p id="persist-result" class="fine-print"></p></div></div>`,
     "center-modal",
   );
   modal.querySelector("[data-close]").onclick = closeModal;

@@ -1510,3 +1510,142 @@ test("legacy and newly created completed tasks auto-archive while reveal remains
   );
   expect(after).toEqual(before);
 });
+
+test("kanban retains the selected column through background sync and avoids no-op redraws", async ({
+  page,
+}) => {
+  let payload = initialState(),
+    reads = 0,
+    release;
+  const gate = new Promise((resolve) => (release = resolve));
+  payload.tasks[0].description = "同期後のメモ";
+  payload.tasks[0].updatedAt = Date.now() + 100;
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "taskly-cloud-config",
+      JSON.stringify({
+        url: "https://taskly-test.supabase.co",
+        key: "public-key",
+      }),
+    );
+    localStorage.setItem(
+      "taskly-cloud-auth",
+      JSON.stringify({
+        access_token: "test",
+        refresh_token: "refresh",
+        expires_at: Date.now() + 3600000,
+        user: { id: "same-user", email: "test@example.com" },
+      }),
+    );
+    localStorage.setItem("taskly-include-archived", "true");
+  });
+  await page.route("https://taskly-test.supabase.co/**", async (route) => {
+    if (route.request().method() === "GET") {
+      reads++;
+      await gate;
+      return route.fulfill({ json: [{ payload, version: 1 }] });
+    }
+    if (route.request().method() === "PATCH") {
+      payload = route.request().postDataJSON().payload;
+      return route.fulfill({ json: [{ payload, version: 2 }] });
+    }
+    return route.fulfill({ json: [] });
+  });
+  await start(page);
+  await expect.poll(() => reads).toBe(1);
+  await page
+    .locator(".board")
+    .evaluate((el) => (el.scrollLeft = el.scrollWidth - el.clientWidth));
+  const left = await page.locator(".board").evaluate((el) => el.scrollLeft);
+  release();
+  await expect(
+    page.locator(".task-card").filter({ hasText: "リサーチをまとめる" }),
+  ).toContainText("同期後のメモ");
+  expect(
+    Math.abs(
+      (await page.locator(".board").evaluate((el) => el.scrollLeft)) - left,
+    ),
+  ).toBeLessThan(3);
+  await page.evaluate(
+    () => (window.boardBeforeSync = document.querySelector(".board")),
+  );
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect.poll(() => reads).toBe(2);
+  await expect(page.locator("[data-connection]").first()).not.toContainText(
+    "同期中",
+  );
+  expect(
+    await page.evaluate(
+      () => window.boardBeforeSync === document.querySelector(".board"),
+    ),
+  ).toBe(true);
+});
+
+test("kanban preserves touch swipe and momentum through a visibility refresh", async ({
+  page,
+  context,
+}, info) => {
+  test.skip(
+    info.project.name !== "mobile",
+    "Touch swipe regression uses the mobile layout.",
+  );
+  await start(page);
+  const board = page.locator(".board");
+  await board.scrollIntoViewIfNeeded();
+  const box = await board.boundingBox(),
+    x = box.x + Math.min(310, box.width - 20),
+    y = Math.max(80, Math.min(720, box.y + 80));
+  const cdp = await context.newCDPSession(page);
+  await page.evaluate(
+    () => (window.boardDuringSwipe = document.querySelector(".board")),
+  );
+  await cdp.send("Input.dispatchTouchEvent", {
+    type: "touchStart",
+    touchPoints: [{ x, y, id: 1 }],
+  });
+  for (let i = 1; i <= 6; i++)
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [{ x: x - i * 40, y, id: 1 }],
+    });
+  await page.waitForTimeout(250);
+  await page.evaluate(() =>
+    document.dispatchEvent(new Event("visibilitychange")),
+  );
+  expect(
+    await page.evaluate(
+      () => window.boardDuringSwipe === document.querySelector(".board"),
+    ),
+  ).toBe(true);
+  await cdp.send("Input.dispatchTouchEvent", {
+    type: "touchEnd",
+    touchPoints: [],
+  });
+  await cdp.detach();
+  await expect
+    .poll(() => page.locator(".board").evaluate((el) => el.scrollLeft))
+    .toBeGreaterThan(200);
+  await page.waitForTimeout(450);
+  const left = await board.evaluate((el) => el.scrollLeft);
+  await page.evaluate(() =>
+    document.dispatchEvent(new Event("visibilitychange")),
+  );
+  await page.waitForTimeout(450);
+  expect(
+    Math.abs((await board.evaluate((el) => el.scrollLeft)) - left),
+  ).toBeLessThan(3);
+});
+
+test("application version is shown in the footer and sync settings", async ({
+  page,
+}) => {
+  await start(page);
+  await expect(page.locator(".page-footer [data-app-version]")).toHaveText(
+    "Taskly v1.0.1",
+  );
+  await expect(page.locator(".page-footer [data-app-version]")).toBeVisible();
+  await settings(page);
+  await expect(page.locator("#modal [data-app-version]")).toHaveText(
+    "Taskly v1.0.1",
+  );
+});

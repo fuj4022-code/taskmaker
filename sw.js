@@ -1,8 +1,9 @@
-const CACHE = "taskly-v5";
+const CACHE = "taskly-v1.0.1";
 const FILES = [
   "/",
   "/index.html",
   "/src/app.js",
+  "/src/version.js",
   "/src/model.js",
   "/src/schedule.js",
   "/src/storage.js",

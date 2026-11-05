@@ -4700,3 +4700,14 @@ dialog.task-drawer {
     font-size: 10px;
   }
 }
+.page-footer > .app-version {
+  display: inline !important;
+  white-space: nowrap;
+  font-size: 10px;
+  color: #819789;
+}
+.settings-modal .app-version {
+  font-size: 10px;
+  color: #819789;
+  margin: 6px 0 0;
+}

@@ -325,3 +325,20 @@ test("Gantt groups pending periods above and undated items below, excluding comp
   assert.equal(closed.unscheduled[0].checks.length, 0);
   assert.equal(t.checklist.length, 3);
 });
+
+test("visible application version matches package metadata and offline cache", async () => {
+  const { readFile } = await import("node:fs/promises"),
+    { APP_VERSION } = await import("../src/version.js");
+  const pkg = JSON.parse(
+      await readFile(new URL("../package.json", import.meta.url)),
+    ),
+    lock = JSON.parse(
+      await readFile(new URL("../package-lock.json", import.meta.url)),
+    ),
+    sw = await readFile(new URL("../sw.js", import.meta.url), "utf8");
+  assert.equal(APP_VERSION, pkg.version);
+  assert.equal(APP_VERSION, lock.version);
+  assert.equal(APP_VERSION, lock.packages[""].version);
+  assert.ok(sw.includes("taskly-v" + APP_VERSION));
+  assert.ok(sw.includes("/src/version.js"));
+});
