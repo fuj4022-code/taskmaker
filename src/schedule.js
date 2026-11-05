@@ -1,29 +1,33 @@
 import { addDays, dateKey, dayDiff, calendarDays } from "./model.js";
 
-export function addMonths(month, amount) {
-  const d = new Date(month.slice(0, 7) + "-01T12:00:00");
-  d.setMonth(d.getMonth() + amount);
-  return dateKey(d);
-}
-export function ganttWindow(anchor, months = 3, unit = "week") {
-  const first = anchor.slice(0, 7) + "-01",
-    last = addDays(addMonths(first, months), -1);
+export const TIMELINE_COLUMNS = 180;
+export const TIMELINE_BUFFER = 60;
+export function timelineRunway(focus = dateKey(), unit = "week") {
   const daysPerColumn = unit === "week" ? 7 : 1;
-  const start =
+  const aligned =
     unit === "week"
-      ? addDays(first, -(new Date(first + "T12:00:00").getDay() + 6) % 7)
-      : first;
-  const dayCount =
-    Math.ceil((dayDiff(start, last) + 1) / daysPerColumn) * daysPerColumn;
+      ? addDays(focus, -((new Date(focus + "T12:00:00").getDay() + 6) % 7))
+      : focus;
+  return timelineFrom(addDays(aligned, -TIMELINE_BUFFER * daysPerColumn), unit);
+}
+export function timelineFrom(start, unit = "week") {
+  const daysPerColumn = unit === "week" ? 7 : 1,
+    dayCount = TIMELINE_COLUMNS * daysPerColumn;
   return {
     start,
     end: addDays(start, dayCount - 1),
     dayCount,
     daysPerColumn,
-    columns: Array.from({ length: dayCount / daysPerColumn }, (_, i) =>
+    columns: Array.from({ length: TIMELINE_COLUMNS }, (_, i) =>
       addDays(start, i * daysPerColumn),
     ),
   };
+}
+export function dateAtOffset(window, offset, columnWidth) {
+  return addDays(
+    window.start,
+    Math.floor(Math.max(0, offset) / columnWidth) * window.daysPerColumn,
+  );
 }
 export function ganttBar(start, end, window, columnWidth) {
   const first = dayDiff(window.start, start),

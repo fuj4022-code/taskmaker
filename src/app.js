@@ -16,8 +16,10 @@ import {
 } from "./model.js";
 import { load, save } from "./storage.js";
 import {
-  addMonths,
-  ganttWindow,
+  timelineRunway,
+  timelineFrom,
+  dateAtOffset,
+  TIMELINE_BUFFER,
   ganttBar,
   deadlineState,
   deadlineLabel,
@@ -91,14 +93,11 @@ let state,
   ),
   calendarMonth = dateKey().slice(0, 7) + "-01",
   activeResize = null,
-  ganttAnchor = dateKey().slice(0, 7) + "-01",
+  ganttRunway = null,
+  timelineSavedScroll = null,
+  timelineRequestedScroll = null,
   ganttUnit =
     localStorage.getItem("taskly-gantt-unit") === "day" ? "day" : "week",
-  ganttMonths = [1, 3, 6].includes(
-    Number(localStorage.getItem("taskly-gantt-months")),
-  )
-    ? Number(localStorage.getItem("taskly-gantt-months"))
-    : 3,
   weekWidth = Math.min(
     140,
     Math.max(56, Number(localStorage.getItem("taskly-week-width")) || 84),
@@ -222,10 +221,13 @@ function updateConnection() {
 }
 function render() {
   if (activeResize) return;
-  const old = app.querySelector(".gantt-scroll"),
-    scroll = old ? { left: old.scrollLeft, top: old.scrollTop } : null;
-  const list = tasks(),
-    all = activeTasks(state),
+  const previous = app.querySelector(".gantt-scroll");
+  const scroll = previous
+    ? { left: previous.scrollLeft, top: previous.scrollTop }
+    : timelineSavedScroll;
+  if (previous) timelineSavedScroll = scroll;
+  const all = activeTasks(state),
+    list = tasks(),
     title = archiveMode ? "アーカイブ" : "すべてのタスク";
   const tags = [
     ...new Set(
@@ -234,39 +236,26 @@ function render() {
         .flatMap((t) => t.tags),
     ),
   ].sort();
-  const mobile = window.matchMedia("(max-width:760px)").matches;
-  app.innerHTML = `<div class="layout ${navOpen ? "nav-open" : ""} ${sidebarHidden ? "sidebar-hidden" : ""}">
- <button class="nav-shade" data-action="nav" aria-label="メニューを閉じる"></button>
- <aside class="sidebar" ${(mobile ? !navOpen : sidebarHidden) ? "inert" : ""}>
-  <div class="sidebar-heading"><a href="#" class="brand" data-action="home">Taskly</a><button class="icon-button" data-action="nav" aria-label="サイドバーを閉じる">${icon("close")}</button></div>
-  <nav aria-label="メインメニュー"><button class="nav-item ${!archiveMode ? "active" : ""}" data-action="home">${icon("board")}<span>すべてのタスク</span><span class="nav-count">${all.length}</span></button>
-  <button class="nav-item ${archiveMode ? "active" : ""}" data-action="archive">${icon("archive")}<span>アーカイブ</span><span class="nav-count">${activeTasks(state, { includeArchived: true }).filter((t) => t.archived).length}</span></button></nav>
-  <div class="sidebar-bottom"><button class="nav-item" data-action="settings">${icon("settings")}設定・データ同期</button></div>
- </aside><main><header class="topbar"><button class="icon-button sidebar-toggle" data-action="nav" aria-label="メニュー" aria-expanded="${mobile ? navOpen : !sidebarHidden}" title="サイドバーを開く・閉じる">${icon("menu")}</button><span class="topbar-title">タスク管理</span><div class="top-actions"><span class="connection"><span class="online-dot"></span><span data-connection>${connectionText()}</span></span><button class="icon-button" data-action="settings" aria-label="同期と設定">${icon("cloud")}</button></div></header>
- <div class="content"><div class="page-heading"><h1>${title}</h1>${archiveMode ? '<span class="archive-heading-note">完了したタスクを保管しています</span>' : `<button class="button primary" data-action="new">${icon("plus")}タスクを追加</button>`}</div>
- <div class="view-toolbar">${
-   archiveMode
-     ? '<span class="archive-filter-label">保管済みタスク</span>'
-     : `<div class="view-tabs" role="tablist" aria-label="表示形式">${[
-         ["board", "board", "かんばん"],
-         ["gantt", "gantt", "ガントチャート"],
-         ["calendar", "calendar", "カレンダー"],
-       ]
-         .map(
-           ([id, i, label]) =>
-             `<button role="tab" aria-selected="${view === id}" class="${view === id ? "selected" : ""}" data-view="${id}">${icon(i)}${label}</button>`,
-         )
-         .join("")}</div>`
- }
- <div class="toolbar-right"><label class="search-box">${icon("search")}<input id="search" placeholder="タスクを検索…" aria-label="タスクを検索" value="${esc(search)}"></label><label class="filter-select"><span class="sr-only">状態で絞り込み</span><select id="status-filter"><option value="">すべての状態</option>${STATUSES.map((s) => `<option value="${s.id}" ${s.id === statusFilter ? "selected" : ""}>${esc(statusLabel(s.id))}</option>`).join("")}</select>${icon("down")}</label></div></div>
- <div class="tag-toolbar"><div class="tag-filters"><button class="tag-filter ${!tag ? "selected" : ""}" data-tag="">すべて</button>${tags.map((t) => `<button class="tag-filter ${tag === t ? "selected" : ""}" data-tag="${esc(t)}">${esc(t)}</button>`).join("")}</div><span class="result-count">${list.length} 件</span></div>
- ${archiveMode ? archiveList(list) : view === "board" ? board(list) : view === "gantt" ? gantt(list) : calendar(list)}
- ${!archiveMode ? '<p class="deadline-legend"><span class="deadline-key soon"></span>期限まで3日以内 <span class="deadline-key overdue"></span>期限超過</p>' : ""}</div></main></div>`;
+  const done = list.filter((t) => t.status === "done").length,
+    overdue = list.filter(
+      (t) => t.due && t.due < dateKey() && t.status !== "done",
+    ).length;
+  app.innerHTML = `<div class="layout ${navOpen ? "nav-open" : ""} ${sidebarHidden ? "sidebar-hidden" : ""}"><button class="nav-shade" data-action="nav" aria-label="メニューを閉じる"></button><aside class="sidebar" ${window.matchMedia("(max-width:760px)").matches ? (!navOpen ? "inert" : "") : sidebarHidden ? "inert" : ""}><a href="#" class="brand" data-action="home"><span class="brand-mark">${icon("leaf")}</span>taskly<span class="brand-dot">.</span></a><button class="icon-button sidebar-close" data-action="nav" aria-label="サイドバーを閉じる">${icon("close")}</button><div class="workspace"><span class="workspace-avatar">M</span><div><strong>マイワークスペース</strong><small>自分らしく、進めよう</small></div><span class="workspace-chevron">${icon("down")}</span></div><p class="nav-label">ワークスペース</p><button class="nav-item ${!archiveMode ? "active" : ""}" data-action="home">${icon("grid")}<span>すべてのタスク</span><span class="nav-count">${all.length}</span></button><button class="nav-item ${archiveMode ? "active" : ""}" data-action="archive">${icon("archive")}<span>アーカイブ</span><span class="nav-count">${activeTasks(state, { includeArchived: true }).filter((t) => t.archived).length}</span></button><div class="sidebar-bottom"><div class="little-note"><span>${icon("sun")}</span><strong>小さな一歩が、大きな前進。</strong><p>今日の「できた」を増やそう。</p><div class="note-art"><i></i><i></i><i></i></div></div><button class="nav-item" data-action="settings">${icon("settings")}<span>設定・データ同期</span></button><div class="profile"><span class="profile-avatar">M</span><div><strong>マイアカウント</strong><small>${getAuth() ? "クラウド同期が有効" : "ローカルワークスペース"}</small></div><span class="online-dot"></span></div></div></aside><main><header class="topbar"><button class="icon-button sidebar-toggle" data-action="nav" aria-label="メニュー" aria-expanded="${window.matchMedia("(max-width:760px)").matches ? navOpen : !sidebarHidden}" title="サイドバーを開く・閉じる">${icon("menu")}</button><div class="breadcrumb">ワークスペース ${icon("chevron")} <span>${esc(title)}</span></div><div class="top-actions"><span class="connection"><span class="online-dot"></span><span data-connection>${connectionText()}</span></span><button class="icon-button" data-action="settings" aria-label="同期と設定">${icon("cloud")}</button><span class="top-avatar">M</span></div></header><div class="content"><div class="page-heading"><div><div class="eyebrow">YOUR SPACE, YOUR PACE</div><div class="project-title-line"><h1>${esc(title)}<span class="heading-dot" style="--dot:#4d8b78"></span></h1></div><p>今日やることも、これからの計画も。ここから始めよう。</p></div>${archiveMode ? `<span class="archive-heading-note">完了したタスクを保管しています</span>` : `<button class="button primary new-task" data-action="new">${icon("plus")}タスクを追加</button>`}</div><div class="stats"><div class="stat"><span class="stat-icon total">${icon("list")}</span><div><span>すべてのタスク</span><strong>${list.length}<small>件</small></strong></div><div class="mini-bars"><i></i><i></i><i></i><i></i><i></i></div></div><div class="stat"><span class="stat-icon progress">${icon("clock")}</span><div><span>進行中</span><strong>${list.filter((t) => t.status === "doing").length}<small>件</small></strong></div><span class="stat-note">少しずつ前へ</span></div><div class="stat"><span class="stat-icon complete">${icon("check")}</span><div><span>完了</span><strong>${done}<small>件</small></strong></div><span class="completion-ring" style="--progress:${list.length ? (done / list.length) * 100 : 0}%"><span>${list.length ? Math.round((done / list.length) * 100) : 0}%</span></span></div><div class="stat"><span class="stat-icon deadline">${icon("calendar")}</span><div><span>期限超過</span><strong>${overdue}<small>件</small></strong></div><span class="stat-note">${overdue ? "日程を見直そう" : "順調なペースです"}</span></div></div><div class="view-toolbar">${archiveMode ? '<div class="archive-filter-label">保管済みタスク</div>' : `<div class="view-tabs" role="tablist" aria-label="表示形式"><button role="tab" aria-selected="${view === "board"}" class="${view === "board" ? "selected" : ""}" data-view="board">${icon("board")}かんばん</button><button role="tab" aria-selected="${view === "gantt"}" class="${view === "gantt" ? "selected" : ""}" data-view="gantt">${icon("gantt")}ガントチャート</button><button role="tab" aria-selected="${view === "calendar"}" class="${view === "calendar" ? "selected" : ""}" data-view="calendar">${icon("calendar")}カレンダー</button></div>`}<div class="toolbar-right"><label class="search-box">${icon("search")}<input id="search" placeholder="タスクを検索…" aria-label="タスクを検索" value="${esc(search)}"><kbd>/</kbd></label><label class="filter-select"><span class="sr-only">状態で絞り込み</span><select id="status-filter"><option value="">すべての状態</option>${STATUSES.map((s) => `<option value="${s.id}" ${s.id === statusFilter ? "selected" : ""}>${esc(statusLabel(s.id))}</option>`).join("")}</select>${icon("down")}</label></div></div><div class="tag-toolbar"><div class="tag-filters">${icon("tag")}<button class="tag-filter ${!tag ? "selected" : ""}" data-tag="">すべて</button>${tags.map((t) => `<button class="tag-filter ${tag === t ? "selected" : ""}" data-tag="${esc(t)}">${esc(t)}</button>`).join("")}</div><span class="result-count">${list.length} 件のタスク</span></div>${archiveMode ? archiveList(list) : view === "board" ? board(list) : view === "gantt" ? gantt(list) : calendar(list)}${!archiveMode ? '<p class="deadline-legend"><span class="deadline-key soon"></span>期限まで3日以内 <span class="deadline-key overdue"></span>期限超過</p>' : ""}<footer class="page-footer"><span>${icon("check")}変更はこの端末に自動保存されます</span><span>Make room for what matters.</span></footer></div></main></div>`;
+
   bind();
   const scroller = app.querySelector(".gantt-scroll");
-  if (scroller && scroll) {
-    scroller.scrollLeft = scroll.left;
-    scroller.scrollTop = scroll.top;
+  if (scroller) {
+    const position = timelineRequestedScroll || scroll;
+    if (position) {
+      scroller.scrollLeft = position.left;
+      scroller.scrollTop = position.top;
+    }
+    timelineRequestedScroll = null;
+    timelineSavedScroll = {
+      left: scroller.scrollLeft,
+      top: scroller.scrollTop,
+    };
+    updateTimelineLabel(scroller);
   }
   updateConnection();
 }
@@ -284,7 +273,22 @@ function board(list) {
 function card(t) {
   const checked = t.checklist.filter((c) => c.done).length,
     urgency = deadlineState(t);
-  return `<article class="task-card ${t.status === "done" ? "is-done" : ""} ${urgency ? "deadline-" + urgency : ""}" data-task="${t.id}" draggable="true" tabindex="0" aria-label="${esc(t.title)}を開く">${t.images.length ? `<div class="card-cover"><img src="${t.images[0].data}" alt="${esc(t.images[0].name)}" draggable="false"></div>` : ""}<div class="card-body"><div class="card-top"><div class="task-tags">${t.tags.map((tag) => `<span class="task-tag tag-${tagColor(tag)}">${esc(tag)}</span>`).join("")}${!t.tags.length ? '<span class="untagged">タスク</span>' : ""}</div><button class="status-quick ${t.status}" data-cycle="${t.id}" aria-label="${esc(t.title)}：${esc(statusLabel(t.status))}。次の状態へ変更" title="ワンタッチで状態を変更">${statusIcon(t.status)}</button></div><h3>${esc(t.title)}</h3>${t.description ? `<p class="card-description">${esc(t.description)}</p>` : ""}${t.checklist.length ? `<div class="card-progress"><div><span>${icon("list")}チェックリスト</span><span>${checked}/${t.checklist.length}</span></div><div class="progress-track"><span style="width:${(checked / t.checklist.length) * 100}%"></span></div></div>` : ""}<div class="card-progress-state">${progressBadge(t)}${t.status === "done" ? `<button class="icon-button" data-archive-task="${t.id}" aria-label="${esc(t.title)}をアーカイブ" title="アーカイブ">${icon("archive")}</button>` : ""}</div><div class="card-footer"><span class="due" title="${deadlineLabel(t)}">${icon("calendar")}${formatDate(t.due)}${urgency ? `<strong class="deadline-label">${deadlineLabel(t)}</strong>` : ""}</span><div class="card-meta">${t.images.length ? `<span>${icon("image")}${t.images.length}</span>` : ""}</div></div></div></article>`;
+  return `<article class="task-card card-compact ${t.status === "done" ? "is-done" : ""} ${urgency ? "deadline-" + urgency : ""}" data-task="${t.id}" draggable="true" tabindex="0" aria-label="${esc(t.title)}を開く">${t.images.length ? `<div class="card-cover"><img src="${t.images[0].data}" alt="${esc(t.images[0].name)}" draggable="false"></div>` : ""}<div class="card-body"><div class="card-heading"><h3>${esc(t.title)}</h3><button class="status-quick ${t.status}" data-cycle="${t.id}" aria-label="${esc(t.title)}：${esc(statusLabel(t.status))}。次の状態へ変更" title="ワンタッチで状態を変更">${statusIcon(t.status)}</button></div>
+ ${
+   t.tags.length
+     ? `<div class="task-tags">${t.tags
+         .slice(0, 3)
+         .map(
+           (tag) =>
+             `<span class="task-tag tag-${tagColor(tag)}">${esc(tag)}</span>`,
+         )
+         .join(
+           "",
+         )}${t.tags.length > 3 ? `<span class="extra-tags" aria-label="ほか${t.tags.length - 3}個のタグ">+${t.tags.length - 3}</span>` : ""}</div>`
+     : ""
+ }
+ ${t.description ? `<p class="card-description">${esc(t.description)}</p>` : ""}<div class="card-compact-progress">${t.checklist.length ? `<span class="check-summary" aria-label="チェックリスト ${checked}/${t.checklist.length}">${icon("list")}${checked}/${t.checklist.length}</span><div class="progress-track"><span style="width:${(checked / t.checklist.length) * 100}%"></span></div>` : ""}${progressBadge(t)}</div>
+ <div class="card-footer"><span class="due" title="${deadlineLabel(t)}">${icon("calendar")}${formatDate(t.due)}${urgency ? `<strong class="deadline-label">${deadlineLabel(t)}</strong>` : ""}</span><div class="card-meta">${t.images.length ? `<span>${icon("image")}${t.images.length}</span>` : ""}${t.status === "done" ? `<button class="icon-button" data-archive-task="${t.id}" aria-label="${esc(t.title)}をアーカイブ" title="アーカイブ">${icon("archive")}</button>` : ""}</div></div></div></article>`;
 }
 function tagColor(t) {
   let n = 0;
@@ -292,7 +296,18 @@ function tagColor(t) {
   return n % 5;
 }
 function timeline() {
-  return ganttWindow(ganttAnchor, ganttMonths, ganttUnit);
+  if (!ganttRunway) {
+    ganttRunway = timelineRunway(dateKey(), ganttUnit);
+    timelineRequestedScroll = { left: TIMELINE_BUFFER * columnWidth(), top: 0 };
+  }
+  return ganttRunway;
+}
+function resetTimeline(focus = dateKey()) {
+  ganttRunway = timelineRunway(focus, ganttUnit);
+  timelineRequestedScroll = {
+    left: TIMELINE_BUFFER * columnWidth(),
+    top: timelineSavedScroll?.top || 0,
+  };
 }
 function columnWidth() {
   return ganttUnit === "week" ? weekWidth : dayWidth;
@@ -312,25 +327,85 @@ function ganttRow(t, check = null) {
     geo = start ? ganttGeometry(start, end) : null,
     w = timeline();
   const attrs = `data-resize-task="${t.id}" ${check ? `data-resize-check="${check.id}"` : ""}`;
-  const urgency = deadlineState(check ? { ...check, status } : t);
-  return `<button class="gantt-title gantt-task ${check ? "gantt-subtask" : ""}" data-open="${t.id}"><span class="column-status ${status}">${statusIcon(status)}</span><span>${esc(title)}</span>${!check ? progressBadge(t) : ""}</button><div class="gantt-row ${check ? "subtask-row" : ""}">${w.columns.map((d) => `<span class="gantt-cell ${dateKey() >= d && dateKey() <= addDays(d, w.daysPerColumn - 1) ? "today" : ""} ${ganttUnit === "day" && [0, 6].includes(new Date(d + "T12:00:00").getDay()) ? "weekend" : ""}"></span>`).join("")}${geo?.visible ? `<div class="gantt-bar ${status} ${urgency ? "deadline-" + urgency : ""}" data-bar-task="${t.id}" ${check ? `data-bar-check="${check.id}"` : ""} data-start="${start}" data-end="${end}" style="left:${geo.left}px;width:${geo.width}px" title="${esc(title)} ${formatDate(start)}〜${formatDate(end)}${urgency ? " · " + deadlineLabel(check ? { ...check, status } : t) : ""}">${geo.hasStart ? `<button class="gantt-resize start" data-resize="start" ${attrs} aria-label="${esc(title)}の開始日を調整" title="ドラッグまたは左右キーで開始日を調整"></button>` : ""}<button class="gantt-bar-label" data-open="${t.id}">${esc(title)}</button>${geo.hasEnd ? `<button class="gantt-resize due" data-resize="due" ${attrs} aria-label="${esc(title)}の期限日を調整" title="ドラッグまたは左右キーで期限日を調整"></button>` : ""}</div>` : `<button class="unscheduled" data-open="${t.id}">${start ? "表示期間外 · 日程を確認" : "日程を設定する"} ${icon("arrow")}</button>`}</div>`;
+  const urgency = deadlineState(
+    check ? { ...check, status: t.status === "done" ? "done" : status } : t,
+  );
+  const period = start
+    ? `${start.slice(0, 4) !== dateKey().slice(0, 4) ? start.slice(0, 4) + "年 " : ""}${formatDate(start)}〜${end.slice(0, 4) !== start.slice(0, 4) ? end.slice(0, 4) + "年 " : ""}${formatDate(end)}`
+    : "期間未設定";
+  return `<div class="gantt-title gantt-task ${check ? "gantt-subtask" : ""}" data-row-task="${t.id}" ${check ? `data-row-check="${check.id}"` : ""}>
+ ${check ? `<input type="checkbox" class="gantt-check-toggle" data-gantt-check-task="${t.id}" data-gantt-check-id="${check.id}" ${check.done ? "checked" : ""} aria-label="${esc(title)}を完了">` : `<span class="column-status ${status}">${statusIcon(status)}</span>`}
+ <button class="gantt-row-name" data-open="${t.id}" ${check ? `data-focus-check="${check.id}"` : ""} title="${esc(title)}${check ? " · " + period : ""}"><span>${esc(title)}</span>${check ? `<small class="gantt-check-period">${period}</small>` : ""}</button>
+ ${check ? "" : `<select class="gantt-status-select" data-gantt-status="${t.id}" aria-label="${esc(title)}のステータス">${STATUSES.map((s) => `<option value="${s.id}" ${s.id === t.status ? "selected" : ""}>${esc(statusLabel(s.id))}</option>`).join("")}</select>`}</div>
+ <div class="gantt-row ${check ? "subtask-row" : ""}">${w.columns.map((d) => `<span class="gantt-cell ${dateKey() >= d && dateKey() <= addDays(d, w.daysPerColumn - 1) ? "today" : ""} ${ganttUnit === "day" && [0, 6].includes(new Date(d + "T12:00:00").getDay()) ? "weekend" : ""}"></span>`).join("")}
+ ${geo?.visible ? `<div class="gantt-bar ${status} ${urgency ? "deadline-" + urgency : ""}" data-bar-task="${t.id}" ${check ? `data-bar-check="${check.id}"` : ""} data-start="${start}" data-end="${end}" style="left:${geo.left}px;width:${geo.width}px" title="${esc(title)} ${period}">${geo.hasStart ? `<button class="gantt-resize start" data-resize="start" ${attrs} aria-label="${esc(title)}の開始日を調整" title="ドラッグまたは左右キーで開始日を調整"></button>` : ""}<button class="gantt-bar-label" data-open="${t.id}" ${check ? `data-focus-check="${check.id}"` : ""}>${esc(title)}</button>${geo.hasEnd ? `<button class="gantt-resize due" data-resize="due" ${attrs} aria-label="${esc(title)}の期限日を調整" title="ドラッグまたは左右キーで期限日を調整"></button>` : ""}</div>` : start ? `<button class="unscheduled" data-gantt-jump="${start}">${period} · この期間へ移動 ${icon("arrow")}</button>` : `<button class="unscheduled" data-open="${t.id}" ${check ? `data-focus-check="${check.id}"` : ""}>期間を設定する ${icon("arrow")}</button>`}</div>`;
 }
 function gantt(list) {
   const w = timeline(),
-    groups = [];
+    groups = [],
+    width = columnWidth();
   for (const d of w.columns) {
     const key = d.slice(0, 7),
       last = groups.at(-1);
     if (last?.key === key) last.count++;
     else groups.push({ key, count: 1 });
   }
-  const width = columnWidth();
   return `<section class="gantt-section" style="--day-width:${width}px;--timeline-width:${w.columns.length * width}px" data-unit="${ganttUnit}" data-range-start="${w.start}" data-range-end="${w.end}">
- <div class="gantt-tools"><div class="timeline-navigation"><button class="icon-button back" data-timeline-shift="-1" aria-label="前の期間">${icon("chevron")}</button><strong>${w.start.slice(0, 4)}年 ${formatDate(w.start)}〜${w.end.slice(0, 4) !== w.start.slice(0, 4) ? w.end.slice(0, 4) + "年 " : ""}${formatDate(w.end)}</strong><button class="icon-button" data-timeline-shift="1" aria-label="次の期間">${icon("chevron")}</button><button class="button small" data-action="today">今日</button></div>
- <div class="gantt-controls"><label class="compact-field">表示期間<select id="gantt-months" aria-label="ガントの表示期間">${[1, 3, 6].map((n) => `<option value="${n}" ${n === ganttMonths ? "selected" : ""}>${n}か月</option>`).join("")}</select></label><label class="compact-field">表示単位<select id="gantt-unit" aria-label="ガントの表示単位"><option value="day" ${ganttUnit === "day" ? "selected" : ""}>日ごと</option><option value="week" ${ganttUnit === "week" ? "selected" : ""}>週ごと</option></select></label><label class="gantt-width">列幅<input type="range" id="day-width" aria-label="ガントの列幅" min="${ganttUnit === "week" ? 56 : 24}" max="${ganttUnit === "week" ? 140 : 80}" step="4" value="${width}"><output id="day-width-value">${width}px</output></label></div></div>
- <p class="resize-feedback" role="status">帯の両端をドラッグして期間を変更。左右キーは1日ずつ調整。</p>
- <div class="gantt-scroll"><div class="gantt-grid"><div class="gantt-title gantt-corner">タスク名</div><div class="gantt-dates"><div class="gantt-months">${groups.map((g) => `<div style="width:${g.count * width}px" data-column-count="${g.count}">${g.key.replace("-", "年")}月</div>`).join("")}</div><div class="gantt-date-cells">${w.columns.map((d) => `<div class="gantt-day ${dateKey() >= d && dateKey() <= addDays(d, w.daysPerColumn - 1) ? "today" : ""}">${ganttUnit === "week" ? `<strong>${formatDate(d)}</strong><small>〜${formatDate(addDays(d, 6))}</small>` : `<small>${["日", "月", "火", "水", "木", "金", "土"][new Date(d + "T12:00:00").getDay()]}</small><strong>${Number(d.slice(8))}</strong>`}</div>`).join("")}</div></div>
+ <div class="gantt-tools"><div class="timeline-navigation"><button class="icon-button back" data-gantt-step="-1" aria-label="前の期間">${icon("chevron")}</button><strong class="gantt-visible-period"></strong><button class="icon-button" data-gantt-step="1" aria-label="次の期間">${icon("chevron")}</button><button class="button small" data-action="today">今日</button></div>
+ <div class="gantt-controls"><label class="compact-field">表示単位<select id="gantt-unit" aria-label="ガントの表示単位"><option value="day" ${ganttUnit === "day" ? "selected" : ""}>日ごと</option><option value="week" ${ganttUnit === "week" ? "selected" : ""}>週ごと</option></select></label><label class="gantt-width">列幅<input type="range" id="day-width" aria-label="ガントの列幅" min="${ganttUnit === "week" ? 56 : 24}" max="${ganttUnit === "week" ? 140 : 80}" step="4" value="${width}"><output id="day-width-value">${width}px</output></label></div></div>
+ <p class="resize-feedback" role="status">横スクロールで前後の日付へ移動。帯の両端で期間、行の選択欄でステータスを変更できます。</p>
+ <div class="gantt-scroll"><div class="gantt-grid"><div class="gantt-title gantt-corner">タスク / チェックリスト</div><div class="gantt-dates"><div class="gantt-months">${groups.map((g) => `<div style="width:${g.count * width}px" data-column-count="${g.count}"><span>${g.key.replace("-", "年")}月</span></div>`).join("")}</div><div class="gantt-date-cells">${w.columns.map((d) => `<div class="gantt-day ${dateKey() >= d && dateKey() <= addDays(d, w.daysPerColumn - 1) ? "today" : ""}">${ganttUnit === "week" ? `<strong>${formatDate(d)}</strong><small>〜${formatDate(addDays(d, 6))}</small>` : `<small>${["日", "月", "火", "水", "木", "金", "土"][new Date(d + "T12:00:00").getDay()]}</small><strong>${Number(d.slice(8))}</strong>`}</div>`).join("")}</div></div>
  ${list.map((t) => ganttRow(t) + t.checklist.map((c) => ganttRow(t, c)).join("")).join("")}${!list.length ? '<div class="gantt-empty">表示するタスクはありません。</div>' : ""}</div></div></section>`;
+}
+function updateTimelineLabel(scroller) {
+  const first = dateAtOffset(timeline(), scroller.scrollLeft, columnWidth()),
+    nameWidth =
+      Number.parseFloat(
+        getComputedStyle(app.querySelector(".gantt-section")).getPropertyValue(
+          "--task-width",
+        ),
+      ) || 260;
+  const last = addDays(
+    first,
+    Math.max(
+      1,
+      Math.floor((scroller.clientWidth - nameWidth) / pixelsPerDay()),
+    ) - 1,
+  );
+  app.querySelector(".gantt-visible-period").textContent =
+    `${first.slice(0, 4)}年 ${formatDate(first)}〜${last.slice(0, 4) !== first.slice(0, 4) ? last.slice(0, 4) + "年 " : ""}${formatDate(last)}`;
+}
+function bindContinuousScroll() {
+  const scroller = app.querySelector(".gantt-scroll");
+  if (!scroller) return;
+  scroller.addEventListener("scroll", () => {
+    if (!scroller.isConnected) return;
+    timelineSavedScroll = {
+      left: scroller.scrollLeft,
+      top: scroller.scrollTop,
+    };
+    updateTimelineLabel(scroller);
+    if (activeResize || modal.open) return;
+    const width = columnWidth(),
+      max = scroller.scrollWidth - scroller.clientWidth;
+    const direction =
+      scroller.scrollLeft < width * 3
+        ? -1
+        : max - scroller.scrollLeft < width * 3
+          ? 1
+          : 0;
+    if (!direction) return;
+    const delta = direction * TIMELINE_BUFFER;
+    ganttRunway = timelineFrom(
+      addDays(timeline().start, delta * timeline().daysPerColumn),
+      ganttUnit,
+    );
+    timelineRequestedScroll = {
+      left: scroller.scrollLeft - delta * width,
+      top: scroller.scrollTop,
+    };
+    render();
+  });
 }
 function calendar(list) {
   const weeks = calendarWeeks(list, calendarMonth),
@@ -377,36 +452,57 @@ function bindSchedule() {
     .forEach(
       (b) => (b.onclick = () => openTask(null, "todo", b.dataset.dateNew)),
     );
-  app.querySelectorAll("[data-timeline-shift]").forEach(
+  bindContinuousScroll();
+  app.querySelectorAll("[data-gantt-step]").forEach(
     (b) =>
       (b.onclick = () => {
-        ganttAnchor = addMonths(
-          ganttAnchor,
-          Number(b.dataset.timelineShift) * ganttMonths,
-        );
+        const scroller = app.querySelector(".gantt-scroll");
+        scroller.scrollLeft +=
+          Number(b.dataset.ganttStep) *
+          Math.max(columnWidth() * 3, scroller.clientWidth - 260);
+      }),
+  );
+  app.querySelectorAll("[data-gantt-jump]").forEach(
+    (b) =>
+      (b.onclick = () => {
+        resetTimeline(b.dataset.ganttJump);
         render();
-        app.querySelector(".gantt-scroll").scrollLeft = 0;
+      }),
+  );
+  app
+    .querySelectorAll("[data-gantt-status]")
+    .forEach(
+      (el) =>
+        (el.onchange = () => changeStatus(el.dataset.ganttStatus, el.value)),
+    );
+  app.querySelectorAll("[data-gantt-check-id]").forEach(
+    (el) =>
+      (el.onchange = async () => {
+        try {
+          await mutate((s) => {
+            const t = s.tasks.find((t) => t.id === el.dataset.ganttCheckTask),
+              c = t.checklist.find((c) => c.id === el.dataset.ganttCheckId);
+            c.done = el.checked;
+            t.updatedAt = Math.max(Date.now(), t.updatedAt + 1);
+          });
+        } catch {}
       }),
   );
   const unit = app.querySelector("#gantt-unit");
   if (unit)
     unit.onchange = () => {
+      const scroller = app.querySelector(".gantt-scroll"),
+        focus = dateAtOffset(timeline(), scroller.scrollLeft, columnWidth());
       ganttUnit = unit.value;
       localStorage.setItem("taskly-gantt-unit", ganttUnit);
+      resetTimeline(focus);
       render();
-      app.querySelector(".gantt-scroll").scrollLeft = 0;
-    };
-  const months = app.querySelector("#gantt-months");
-  if (months)
-    months.onchange = () => {
-      ganttMonths = Number(months.value);
-      localStorage.setItem("taskly-gantt-months", String(ganttMonths));
-      render();
-      app.querySelector(".gantt-scroll").scrollLeft = 0;
     };
   const width = app.querySelector("#day-width");
   if (width)
     width.oninput = () => {
+      const scroller = app.querySelector(".gantt-scroll"),
+        offset = scroller.scrollLeft / columnWidth();
       if (ganttUnit === "week") {
         weekWidth = Number(width.value);
         localStorage.setItem("taskly-week-width", String(weekWidth));
@@ -434,6 +530,8 @@ function bindSchedule() {
         bar.style.left = g.left + "px";
         bar.style.width = g.width + "px";
       });
+      scroller.scrollLeft = offset * currentWidth;
+      updateTimelineLabel(scroller);
     };
   app.querySelectorAll("[data-resize]").forEach((handle) => {
     handle.onkeydown = async (e) => {
@@ -642,7 +740,7 @@ function bind() {
           render();
         }
         if (a === "today") {
-          ganttAnchor = dateKey().slice(0, 7) + "-01";
+          if (view === "gantt") resetTimeline(dateKey());
           calendarMonth = dateKey().slice(0, 7) + "-01";
           render();
         }
@@ -690,7 +788,11 @@ function bind() {
   });
   app
     .querySelectorAll("[data-open]")
-    .forEach((b) => (b.onclick = () => openTask(b.dataset.open)));
+    .forEach(
+      (b) =>
+        (b.onclick = () =>
+          openTask(b.dataset.open, "todo", "", b.dataset.focusCheck || "")),
+    );
   app.querySelectorAll("[data-column]").forEach((col) => {
     col.ondragover = (e) => {
       e.preventDefault();
@@ -780,7 +882,7 @@ modal.addEventListener("cancel", (e) => {
 modal.addEventListener("click", (e) => {
   if (e.target === modal && e.offsetX < 0) tryClose();
 });
-function openTask(id, status = "todo", date = "") {
+function openTask(id, status = "todo", date = "", focusCheck = "") {
   const t = id
     ? state.tasks.find((t) => t.id === id)
     : newTask(state.projects[0].id);
@@ -952,6 +1054,15 @@ function openTask(id, status = "todo", date = "") {
   renderChecklist();
   renderImages();
   if (!id) modal.querySelector("#task-title").focus();
+  else if (focusCheck) {
+    const index = draft.checklist.findIndex((c) => c.id === focusCheck);
+    const input = modal.querySelector(`[data-check-start="${index}"]`);
+    if (input)
+      requestAnimationFrame(() => {
+        input.scrollIntoView({ block: "center" });
+        input.focus({ preventScroll: true });
+      });
+  }
 }
 function renderDraftTags() {
   modal.querySelector("#draft-tags").innerHTML = draft.tags

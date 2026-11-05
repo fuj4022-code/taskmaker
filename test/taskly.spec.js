@@ -1,6 +1,10 @@
 import { test, expect } from "@playwright/test";
 import { initialState, normalize, addDays, dateKey } from "../src/model.js";
-import { ganttWindow } from "../src/schedule.js";
+import {
+  timelineFrom,
+  dateAtOffset,
+  TIMELINE_COLUMNS,
+} from "../src/schedule.js";
 async function start(page) {
   await page.goto("/");
   await expect(
@@ -894,47 +898,66 @@ async function seedState(page, data) {
   }, data);
 }
 
-test("Gantt displays several months by week with compact rows and persistent controls", async ({
+test("Gantt scrolls continuously in either direction without a period selector", async ({
   page,
 }) => {
   await start(page);
   await page.getByRole("tab", { name: "ガントチャート", exact: true }).click();
+  await expect(page.locator("#gantt-months")).toHaveCount(0);
   await expect(
     page.getByLabel("ガントの表示単位", { exact: true }),
   ).toHaveValue("week");
-  await expect(
-    page.getByLabel("ガントの表示期間", { exact: true }),
-  ).toHaveValue("3");
-  await expect(page.locator(".gantt-day")).toHaveCount(
-    ganttWindow(dateKey(), 3, "week").columns.length,
-  );
+  await expect(page.locator(".gantt-day")).toHaveCount(TIMELINE_COLUMNS);
+  for (const direction of ["right", "right", "left", "left"]) {
+    const before = await page
+      .locator(".gantt-scroll")
+      .evaluate((el, direction) => {
+        const start =
+            document.querySelector(".gantt-section").dataset.rangeStart,
+          width = document
+            .querySelector(".gantt-day")
+            .getBoundingClientRect().width;
+        el.scrollLeft =
+          direction === "right" ? el.scrollWidth - el.clientWidth - 10 : 0;
+        return { start, width, left: el.scrollLeft };
+      }, direction);
+    const visible = dateAtOffset(
+      timelineFrom(before.start, "week"),
+      before.left,
+      before.width,
+    );
+    await expect
+      .poll(() =>
+        page.locator(".gantt-section").getAttribute("data-range-start"),
+      )
+      .not.toBe(before.start);
+    const after = await page.locator(".gantt-scroll").evaluate((el) => ({
+      start: document.querySelector(".gantt-section").dataset.rangeStart,
+      left: el.scrollLeft,
+    }));
+    expect(
+      dateAtOffset(timelineFrom(after.start, "week"), after.left, before.width),
+    ).toBe(visible);
+    await expect(page.locator(".gantt-day")).toHaveCount(TIMELINE_COLUMNS);
+  }
+  await page.getByRole("button", { name: "今日", exact: true }).click();
+  await page
+    .getByLabel("ガントの表示単位", { exact: true })
+    .selectOption("day");
+  await expect(page.locator(".gantt-day")).toHaveCount(TIMELINE_COLUMNS);
   expect(
     await page
       .locator(".gantt-row")
       .first()
       .evaluate((el) => el.getBoundingClientRect().height),
   ).toBeLessThanOrEqual(32);
-  await page.getByLabel("ガントの表示期間", { exact: true }).selectOption("6");
-  expect(await page.locator(".gantt-day").count()).toBeGreaterThanOrEqual(26);
-  await page
-    .getByLabel("ガントの表示単位", { exact: true })
-    .selectOption("day");
-  expect(await page.locator(".gantt-day").count()).toBeGreaterThanOrEqual(181);
-  await page.getByLabel("ガントの表示期間", { exact: true }).selectOption("1");
-  expect(await page.locator(".gantt-day").count()).toBeGreaterThanOrEqual(28);
   await page.reload();
   await page.getByRole("tab", { name: "ガントチャート", exact: true }).click();
   await expect(
-    page.getByLabel("ガントの表示期間", { exact: true }),
-  ).toHaveValue("1");
-  await expect(
     page.getByLabel("ガントの表示単位", { exact: true }),
   ).toHaveValue("day");
-  await page
-    .getByLabel("ガントの表示単位", { exact: true })
-    .selectOption("week");
   await page.screenshot({
-    path: `/tmp/taskly-smart-gantt-${test.info().project.name}.png`,
+    path: `/tmp/taskly-restored-gantt-${test.info().project.name}.png`,
     fullPage: true,
   });
   expect(
@@ -943,7 +966,6 @@ test("Gantt displays several months by week with compact rows and persistent con
     ),
   ).toBe(true);
 });
-
 test("weekly timeline dragging changes dates at the same scale as its headers", async ({
   page,
 }) => {
@@ -1115,4 +1137,104 @@ test("deadline colors refresh after the date changes while the app stays open", 
   await page.clock.fastForward(60000);
   await expect(card).toHaveClass(/deadline-soon/);
   await expect(card).toContainText("期限まで3日");
+});
+
+test("Gantt shows checklist periods independently and can jump to a distant checklist schedule", async ({
+  page,
+}) => {
+  await start(page);
+  await create(page, "親に日程がないタスク");
+  await page.locator("#task-start").fill("");
+  await page.locator("#task-due").fill("");
+  await page.getByPlaceholder("チェック項目を追加…").fill("遠い予定の小項目");
+  await page.getByPlaceholder("チェック項目を追加…").press("Enter");
+  await page
+    .getByLabel("遠い予定の小項目の開始日", { exact: true })
+    .fill("2090-01-10");
+  await page
+    .getByLabel("遠い予定の小項目の期限日", { exact: true })
+    .fill("2090-01-15");
+  await page.getByRole("button", { name: "タスクを作成", exact: true }).click();
+  await openGantt(page);
+  const row = page
+    .locator(".gantt-subtask")
+    .filter({ hasText: "遠い予定の小項目" });
+  await expect(row).toContainText("1/10");
+  await expect(row).toContainText("1/15");
+  await page
+    .getByRole("button", { name: /1\/10〜1\/15 · この期間へ移動/ })
+    .click();
+  const bar = page
+    .locator(".gantt-bar")
+    .filter({ hasText: "遠い予定の小項目" });
+  await expect(bar).toHaveAttribute("data-start", "2090-01-10");
+  await expect(bar).toHaveAttribute("data-end", "2090-01-15");
+  await expect(bar).toBeInViewport();
+  await page
+    .getByRole("checkbox", { name: "遠い予定の小項目を完了", exact: true })
+    .check();
+  await expect(
+    page.getByRole("checkbox", { name: "遠い予定の小項目を完了", exact: true }),
+  ).toBeChecked();
+  await expect(bar).toHaveClass(/done/);
+  await page.reload();
+  await open(page, "親に日程がないタスク");
+  await expect(
+    page.getByLabel("遠い予定の小項目を完了", { exact: true }),
+  ).toBeChecked();
+  await expect(
+    page.getByLabel("遠い予定の小項目の期限日", { exact: true }),
+  ).toHaveValue("2090-01-15");
+});
+
+test("Gantt changes task status directly and preserves it across reload and board views", async ({
+  page,
+}) => {
+  await start(page);
+  await datedTask(page, "ガントで状態を変更");
+  await openGantt(page);
+  const select = page.getByLabel("ガントで状態を変更のステータス", {
+    exact: true,
+  });
+  await select.selectOption("doing");
+  await expect(select).toHaveValue("doing");
+  await expect(page.locator("#modal")).not.toBeVisible();
+  await select.selectOption("done");
+  await expect(select).toHaveValue("done");
+  await page.reload();
+  await expect(page.locator('[data-column="done"]')).toContainText(
+    "ガントで状態を変更",
+  );
+  await openGantt(page);
+  await expect(select).toHaveValue("done");
+  await select.selectOption("todo");
+  await expect(select).toHaveValue("todo");
+  await page.getByRole("tab", { name: "かんばん", exact: true }).click();
+  await expect(page.locator('[data-column="todo"]')).toContainText(
+    "ガントで状態を変更",
+  );
+});
+
+test("restored theme keeps kanban cards compact and task details accessible", async ({
+  page,
+}) => {
+  await start(page);
+  await expect(page.locator(".brand-mark")).toBeVisible();
+  await expect(page.locator(".stats")).toBeVisible();
+  const card = page.locator(".task-card").filter({
+    has: page.getByRole("heading", {
+      name: "リサーチをまとめる",
+      exact: true,
+    }),
+  });
+  expect(
+    await card.evaluate((el) => el.getBoundingClientRect().height),
+  ).toBeLessThanOrEqual(180);
+  await card.click();
+  await expect(page.locator("#task-description")).toContainText("まずは目的");
+  await page.getByRole("button", { name: "閉じる", exact: true }).click();
+  await page.screenshot({
+    path: `/tmp/taskly-restored-board-${test.info().project.name}.png`,
+    fullPage: true,
+  });
 });

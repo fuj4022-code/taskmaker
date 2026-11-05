@@ -1,4 +1,4 @@
-const CACHE = "taskly-v3";
+const CACHE = "taskly-v4";
 const FILES = [
   "/",
   "/index.html",
