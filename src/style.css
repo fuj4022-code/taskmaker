@@ -4711,3 +4711,218 @@ dialog.task-drawer {
   color: #819789;
   margin: 6px 0 0;
 }
+
+/* Project colors identify cards; deadline backgrounds remain visible. */
+.task-card[data-project] {
+  border-left: 4px solid var(--project-color);
+}
+.task-card[data-project]:not(.deadline-soon):not(.deadline-overdue) {
+  background: linear-gradient(var(--project-tint), var(--project-tint)), #fff;
+}
+.card-project-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-height: 26px;
+  margin-top: -4px;
+}
+.card-project {
+  font-size: 11px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.card-order-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 2px;
+}
+.card-order-actions .icon-button {
+  width: 28px;
+  height: 28px;
+  padding: 5px;
+  border: 1px solid #dce5df;
+  background: #ffffffb3;
+}
+.card-order-actions .icon {
+  width: 16px;
+  height: 16px;
+}
+.card-order-actions button:disabled {
+  cursor: default;
+  opacity: 0.3;
+}
+.task-card.drop-before {
+  box-shadow: 0 -4px 0 #397e68;
+}
+.task-card.drop-after {
+  box-shadow: 0 4px 0 #397e68;
+}
+.card-compact .task-tag,
+.task-tag,
+.extra-tags,
+.tag-filter {
+  font-size: 12px;
+  line-height: 1.4;
+}
+.card-compact .due {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.card-compact .deadline-label {
+  font-size: 10px;
+}
+.card-compact .card-footer {
+  align-items: flex-start;
+}
+.card-compact .card-meta {
+  flex-shrink: 0;
+}
+.tag-toolbar {
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.project-filter select {
+  max-width: 180px;
+}
+.inline-project-create {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 18px;
+}
+.inline-project-create summary {
+  cursor: pointer;
+  font-size: 12px;
+}
+.inline-project-create[open] summary {
+  margin-bottom: 12px;
+}
+input[type="color"] {
+  min-width: 48px;
+  height: 36px;
+  padding: 3px;
+  cursor: pointer;
+}
+.projects-modal {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  max-height: min(88dvh, var(--dialog-height, 88dvh));
+}
+.projects-modal > header {
+  padding: 20px 22px 12px;
+  flex-shrink: 0;
+}
+.projects-modal h2 {
+  font-size: 18px;
+  margin: 0;
+}
+.projects-scroll {
+  overflow-y: auto;
+  min-height: 0;
+  padding: 0 22px 12px;
+}
+.projects-scroll > p {
+  font-size: 12px;
+  line-height: 1.7;
+}
+.project-edit-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 64px;
+  gap: 12px;
+}
+.project-edit-row .field {
+  min-width: 0;
+  margin-bottom: 12px;
+}
+.project-edit-row input {
+  width: 100%;
+}
+.project-manager-footer {
+  padding: 12px 22px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+}
+/* Grow with all task rows. Only horizontal scrolling stays inside the Gantt. */
+.gantt-scroll {
+  max-height: none;
+  height: auto;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-y: auto;
+}
+.gantt-project-heading {
+  height: 36px;
+  background: var(--project-tint);
+  gap: 7px;
+}
+.gantt-project-heading strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gantt-project-heading > span:last-child {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 10px;
+}
+.gantt-project-heading .project-dot {
+  background: var(--project-color);
+  margin: 0;
+}
+.gantt-project-band {
+  background: #f6f8f6;
+  border-bottom: 1px solid var(--border);
+}
+.gantt-unscheduled-by-project {
+  padding: 12px;
+  border-top: 1px solid var(--border);
+}
+.gantt-unscheduled-by-project > h3 {
+  font-size: 13px;
+  margin: 0 0 12px;
+}
+.gantt-undated-project h4 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 12px 0 0;
+  font-size: 12px;
+}
+.gantt-undated-project .gantt-unscheduled {
+  border-top: 0;
+  padding-inline: 0;
+}
+/* Use black text consistently, including former pastel labels and controls. */
+body,
+body * {
+  color: #000 !important;
+}
+.button.primary {
+  background: #9dcbb5;
+}
+.button.primary:hover {
+  background: #88bda3;
+}
+#toast {
+  background: #eef6f0;
+  border: 1px solid #a9c8b3;
+}
+input::placeholder,
+textarea::placeholder {
+  color: #000;
+  opacity: 0.65;
+}
+@media (max-width: 760px) {
+  .card-order-actions .icon-button {
+    width: 32px;
+    height: 30px;
+  }
+  .project-filter select {
+    max-width: 165px;
+  }
+}

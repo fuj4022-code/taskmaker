@@ -342,3 +342,49 @@ test("visible application version matches package metadata and offline cache", a
   assert.ok(sw.includes("taskly-v" + APP_VERSION));
   assert.ok(sw.includes("/src/version.js"));
 });
+
+test("column reordering survives merging an older backup and moving across statuses", async () => {
+  const { orderedTasks, moveTask } = await import("../src/model.js");
+  const state = initialState(),
+    old = structuredClone(state);
+  const before = orderedTasks(state.tasks.filter((t) => t.status === "todo"));
+  assert.equal(moveTask(state, before[2].id, "todo", before[0].id), true);
+  const result = merge(old, state);
+  assert.deepEqual(
+    orderedTasks(result.tasks.filter((t) => t.status === "todo")).map(
+      (t) => t.id,
+    ),
+    [before[2].id, before[0].id, before[1].id],
+  );
+  assert.equal(validState(result), true);
+  const doing = result.tasks.find((t) => t.status === "doing");
+  moveTask(result, before[0].id, "doing", doing.id);
+  assert.equal(
+    orderedTasks(result.tasks.filter((t) => t.status === "doing"))[0].id,
+    before[0].id,
+  );
+  moveTask(result, before[0].id, "done");
+  assert.equal(result.tasks.find((t) => t.id === before[0].id).archived, true);
+  moveTask(result, before[0].id, "todo");
+  assert.equal(result.tasks.find((t) => t.id === before[0].id).archived, false);
+  const unchanged = structuredClone(result);
+  assert.equal(moveTask(result, before[0].id, "todo", "missing"), false);
+  assert.deepEqual(result, unchanged);
+  result.tasks[0].boardOrder = NaN;
+  assert.equal(validState(result), false);
+});
+
+test("project settings and task assignment sync independently", () => {
+  const old = initialState(),
+    next = structuredClone(old);
+  next.projects[1].name = "旅行";
+  next.projects[1].color = "#2563eb";
+  next.projects[1].updatedAt = 100;
+  next.tasks[0].projectId = next.projects[1].id;
+  next.tasks[0].updatedAt = 101;
+  const result = merge(old, next);
+  assert.equal(result.projects[1].name, "旅行");
+  assert.equal(result.projects[1].color, "#2563eb");
+  assert.equal(result.tasks[0].projectId, next.projects[1].id);
+  assert.equal(validState(result), true);
+});

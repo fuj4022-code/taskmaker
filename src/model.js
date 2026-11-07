@@ -23,7 +23,7 @@ export function normalize(state) {
   if (!validState(state)) throw Error("データ形式が正しくありません。");
   const next = structuredClone(state);
   next.columns = columns(next);
-  // Legacy project metadata remains only to keep old backups and cloud documents compatible.
+  // Keep existing project IDs so older backups and cloud documents still merge.
   if (!next.projects.length)
     next.projects.push({
       id: "taskly-workspace",
@@ -287,6 +287,7 @@ export function validState(s) {
           (t.archived && t.status !== "done"))) ||
       !Number.isFinite(t.updatedAt) ||
       !Number.isFinite(t.createdAt) ||
+      (t.boardOrder !== undefined && !Number.isFinite(t.boardOrder)) ||
       typeof t.deleted !== "boolean" ||
       !Array.isArray(t.tags) ||
       t.tags.length > 20 ||
@@ -364,5 +365,35 @@ export function newTask(projectId) {
     deleted: false,
     archived: false,
     progress: "ontrack",
+    boardOrder: -now,
   };
+}
+
+export function orderedTasks(tasks) {
+  return [...tasks].sort((a, b) => (a.boardOrder ?? 0) - (b.boardOrder ?? 0));
+}
+// Store column positions on tasks, so ordering survives reloads, backups and sync.
+export function moveTask(state, id, status, beforeId = null) {
+  const task = state.tasks.find((t) => t.id === id && !t.deleted);
+  if (!task || !STATUSES.some((s) => s.id === status)) return false;
+  const target = orderedTasks(
+    state.tasks.filter((t) => !t.deleted && t.status === status && t.id !== id),
+  );
+  const index =
+    beforeId === null
+      ? target.length
+      : target.findIndex((t) => t.id === beforeId);
+  if (index < 0 || beforeId === id) return false;
+  target.splice(index, 0, task);
+  const now = Date.now();
+  target.forEach((t, i) => {
+    if (t.boardOrder !== i || t.status !== status) {
+      t.boardOrder = i;
+      t.status = status;
+      if (status !== "done") t.archived = false;
+      t.updatedAt = Math.max(now, t.updatedAt + 1);
+    }
+  });
+  autoArchiveCompleted(state);
+  return true;
 }

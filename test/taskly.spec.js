@@ -161,7 +161,9 @@ test("tasks from every former project remain visible and tags filter the unified
     page.getByRole("button", { name: "新しいプロジェクト", exact: true }),
   ).toHaveCount(0);
   await create(page, "宿泊を予約");
-  await expect(page.locator("#task-project")).toHaveCount(0);
+  await expect(page.locator("#task-project")).toHaveValue(
+    legacy.projects[0].id,
+  );
   await page.getByPlaceholder("タグを入力して Enter").fill("旅行");
   await page.getByRole("button", { name: "タスクを作成", exact: true }).click();
   await expect(page.locator(".task-card")).toHaveCount(3);
@@ -902,6 +904,9 @@ async function panToTask(page, id) {
     const bar = el.querySelector(`[data-bar-task="${id}"]`);
     el.scrollLeft = Math.max(0, bar.offsetLeft - 20);
   }, id);
+  // Rows now grow with the page rather than living in a vertically scrolling box.
+  // Coordinate-based drag tests need the actual bar inside the screen first.
+  await page.locator(`[data-bar-task="${id}"]`).scrollIntoViewIfNeeded();
 }
 async function seedState(page, data) {
   await page.addInitScript(async (data) => {
@@ -1641,11 +1646,210 @@ test("application version is shown in the footer and sync settings", async ({
 }) => {
   await start(page);
   await expect(page.locator(".page-footer [data-app-version]")).toHaveText(
-    "Taskly v1.0.1",
+    "Taskly v1.1.0",
   );
   await expect(page.locator(".page-footer [data-app-version]")).toBeVisible();
   await settings(page);
   await expect(page.locator("#modal [data-app-version]")).toHaveText(
-    "Taskly v1.0.1",
+    "Taskly v1.1.0",
   );
+});
+
+test("column arrow controls reorder tasks without opening details and persist after reload", async ({
+  page,
+}) => {
+  await start(page);
+  const cards = page.locator('[data-column="todo"] .task-card h3');
+  const before = await cards.allTextContents();
+  await page
+    .getByRole("button", { name: `${before[1]}を上へ移動`, exact: true })
+    .click();
+  await expect(cards).toHaveText([before[1], before[0], ...before.slice(2)]);
+  await expect(page.locator("#modal")).not.toBeVisible();
+  await page.reload();
+  await expect(cards).toHaveText([before[1], before[0], ...before.slice(2)]);
+  await page
+    .getByRole("button", { name: `${before[1]}を下へ移動`, exact: true })
+    .click();
+  await expect(cards).toHaveText(before);
+  await expect(
+    page.getByRole("button", { name: `${before[0]}を上へ移動`, exact: true }),
+  ).toBeDisabled();
+  await create(page, "並べ替え後の新規タスク");
+  await page.getByRole("button", { name: "タスクを作成", exact: true }).click();
+  await expect(cards.first()).toHaveText("並べ替え後の新規タスク");
+});
+
+test("drop before and after cards reorders within and across columns", async ({
+  page,
+}) => {
+  await start(page);
+  const cards = page.locator('[data-column="todo"] .task-card');
+  const ids = await cards.evaluateAll((els) =>
+    els.map((el) => el.dataset.task),
+  );
+  const transfer = await page.evaluateHandle(() => new DataTransfer());
+  await page
+    .locator(`[data-task="${ids[2]}"]`)
+    .dispatchEvent("dragstart", { dataTransfer: transfer });
+  const box = await page.locator(`[data-task="${ids[0]}"]`).boundingBox();
+  await page
+    .locator(`[data-task="${ids[0]}"]`)
+    .dispatchEvent("drop", { dataTransfer: transfer, clientY: box.y + 2 });
+  await expect
+    .poll(() => cards.evaluateAll((els) => els.map((el) => el.dataset.task)))
+    .toEqual([ids[2], ids[0], ids[1]]);
+  const destination = page.locator('[data-column="doing"] .task-card').first();
+  const targetId = await destination.getAttribute("data-task");
+  const targetBox = await destination.boundingBox();
+  await destination.dispatchEvent("drop", {
+    dataTransfer: transfer,
+    clientY: targetBox.y + targetBox.height - 2,
+  });
+  await expect
+    .poll(() =>
+      page
+        .locator('[data-column="doing"] .task-card')
+        .evaluateAll((els) => els.map((el) => el.dataset.task)),
+    )
+    .toEqual([targetId, ids[2], "task-demo-3"]);
+});
+
+test("project creation, assignment, colors, filters and settings persist", async ({
+  page,
+}, info) => {
+  await start(page);
+  if (info.project.name === "mobile") await menu(page);
+  await page
+    .getByRole("button", { name: "プロジェクト設定", exact: true })
+    .click();
+  await page.locator("#project-name").fill("旅行");
+  await page.locator("#project-color").fill("#2563eb");
+  await page
+    .getByRole("button", { name: "プロジェクトを保存", exact: true })
+    .click();
+  const project = (await workspace(page)).projects.find(
+    (p) => p.name === "旅行",
+  );
+  await create(page, "旅程を決める");
+  await page.locator("#task-project").selectOption(project.id);
+  await page.getByPlaceholder("タグを入力して Enter").fill("家族");
+  await page.getByLabel("開始日", { exact: true }).fill("2026-11-07");
+  await page.getByLabel("期限日", { exact: true }).fill("2026-11-10");
+  await page.getByRole("button", { name: "タスクを作成", exact: true }).click();
+  const card = page
+    .locator("[data-task]")
+    .filter({
+      has: page.getByRole("heading", { name: "旅程を決める", exact: true }),
+    });
+  await expect(card.locator(".card-project")).toHaveText("旅行");
+  await expect(card).toHaveCSS("border-left-color", "rgb(37, 99, 235)");
+  await expect(card.locator(".task-tag")).toHaveCSS("font-size", "12px");
+  await expect(card.locator(".task-tag")).toHaveCSS("color", "rgb(0, 0, 0)");
+  await expect(card.locator(".due")).toHaveCSS("font-size", "12px");
+  await expect(card.locator(".due")).toContainText("11/7〜11/10");
+  await page.getByLabel("プロジェクトで絞り込み").selectOption(project.id);
+  await expect(page.locator(".task-card")).toHaveCount(1);
+  await page.reload();
+  await expect(card.locator(".card-project")).toHaveText("旅行");
+  if (info.project.name === "mobile") await menu(page);
+  await page
+    .getByRole("button", { name: "プロジェクト設定", exact: true })
+    .click();
+  await page.locator(`[data-project-name="${project.id}"]`).fill("家族旅行");
+  await page.locator(`[data-project-color="${project.id}"]`).fill("#b382a8");
+  await page
+    .getByRole("button", { name: "プロジェクトを保存", exact: true })
+    .click();
+  await expect(card.locator(".card-project")).toHaveText("家族旅行");
+  await expect(card).toHaveCSS("border-left-color", "rgb(179, 130, 168)");
+});
+
+test("new projects can be created atomically with tasks", async ({ page }) => {
+  await start(page);
+  await create(page, "新規案件の準備");
+  await page.getByText("新しいプロジェクトを追加", { exact: true }).click();
+  await page.locator("#new-project-name").fill("新規案件");
+  await page.locator("#new-project-color").fill("#cb9562");
+  await page.getByRole("button", { name: "タスクを作成", exact: true }).click();
+  const card = page
+    .locator("[data-task]")
+    .filter({ hasText: "新規案件の準備" });
+  await expect(card.locator(".card-project")).toHaveText("新規案件");
+  await page.reload();
+  await open(page, "新規案件の準備");
+  const saved = await workspace(page);
+  const project = saved.projects.find((p) => p.name === "新規案件");
+  await expect(page.locator("#task-project")).toHaveValue(project.id);
+});
+
+test("Gantt groups task and checklist rows by project without internal vertical scrolling", async ({
+  page,
+}) => {
+  const state = initialState();
+  const template = state.tasks[0];
+  state.tasks = Array.from({ length: 24 }, (_, i) => ({
+    ...structuredClone(template),
+    id: `group-${i}`,
+    title: `予定${i}`,
+    status: "todo",
+    projectId: state.projects[i % 2].id,
+    checklist: [
+      {
+        id: `child-${i}`,
+        text: `内訳${i}`,
+        done: false,
+        start: dateKey(),
+        due: addDays(dateKey(), 2),
+      },
+    ],
+  }));
+  state.tasks[23].start = "";
+  state.tasks[23].due = "";
+  state.tasks[23].checklist[0].start = "";
+  state.tasks[23].checklist[0].due = "";
+  await seedState(page, state);
+  await start(page);
+  await openGantt(page);
+  await page
+    .getByLabel("ガントのグループ", { exact: true })
+    .selectOption("project");
+  await expect(page.locator("[data-gantt-project]")).toHaveCount(2);
+  const projectRows = await page.locator(".gantt-grid").evaluate((grid) => {
+    let project;
+    return [...grid.children].flatMap((el) => {
+      if (el.dataset.ganttProject) project = el.dataset.ganttProject;
+      return el.dataset.rowTask ? [{ id: el.dataset.rowTask, project }] : [];
+    });
+  });
+  for (const row of projectRows)
+    expect(row.project).toBe(
+      state.tasks.find((t) => t.id === row.id).projectId,
+    );
+  await expect(
+    page.locator(`[data-undated-project="${state.projects[1].id}"]`),
+  ).toContainText("予定23");
+  const scroll = await page
+    .locator(".gantt-scroll")
+    .evaluate((el) => ({
+      client: el.clientHeight,
+      height: el.scrollHeight,
+      viewport: innerHeight,
+      overflow: getComputedStyle(el).overflowY,
+      max: getComputedStyle(el).maxHeight,
+    }));
+  expect(scroll.height - scroll.client).toBeLessThanOrEqual(1);
+  expect(scroll.height).toBeGreaterThan(scroll.viewport);
+  expect(scroll.max).toBe("none");
+  expect(scroll.overflow).toBe("hidden");
+  await page.reload();
+  await openGantt(page);
+  await expect(
+    page.getByLabel("ガントのグループ", { exact: true }),
+  ).toHaveValue("project");
+  await page
+    .getByLabel("ガントのグループ", { exact: true })
+    .selectOption("none");
+  await expect(page.locator("[data-gantt-project]")).toHaveCount(0);
+  await expect(page.locator(".gantt-task:not(.gantt-subtask)")).toHaveCount(23);
 });

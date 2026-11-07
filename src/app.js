@@ -1,5 +1,8 @@
 import {
   STATUSES,
+  COLORS,
+  orderedTasks,
+  moveTask,
   autoArchiveCompleted,
   PROGRESS,
   columns,
@@ -45,6 +48,7 @@ const paths = {
   search: "m21 21-5-5 M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0",
   chevron: "m9 5 7 7-7 7",
   down: "m6 9 6 6 6-6",
+  up: "m6 15 6-6 6 6",
   check: "m5 12 4 4L19 6",
   circle: "M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0",
   clock: "M12 8v4l3 2 M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0",
@@ -88,6 +92,11 @@ let state,
   search = "",
   tag = "",
   statusFilter = "",
+  projectFilter = "",
+  ganttGrouping =
+    localStorage.getItem("taskly-gantt-grouping") === "project"
+      ? "project"
+      : "none",
   navOpen = false,
   sidebarHidden = localStorage.getItem("taskly-sidebar-hidden") === "true",
   archiveMode = false,
@@ -155,7 +164,8 @@ function tasks() {
             .toLowerCase()
             .includes(search.toLowerCase())) &&
         (!tag || t.tags.includes(tag)) &&
-        (!statusFilter || t.status === statusFilter),
+        (!statusFilter || t.status === statusFilter) &&
+        (!projectFilter || t.projectId === projectFilter),
     );
 }
 function mutate(fn, { silent = false, remote = false } = {}) {
@@ -331,7 +341,7 @@ function render() {
     overdue = list.filter(
       (t) => t.due && t.due < dateKey() && t.status !== "done",
     ).length;
-  app.innerHTML = `<div class="layout ${navOpen ? "nav-open" : ""} ${sidebarHidden ? "sidebar-hidden" : ""}"><button class="nav-shade" data-action="nav" aria-label="メニューを閉じる"></button><aside class="sidebar" ${window.matchMedia("(max-width:760px)").matches ? (!navOpen ? "inert" : "") : sidebarHidden ? "inert" : ""}><a href="#" class="brand" data-action="home"><span class="brand-mark">${icon("leaf")}</span>taskly<span class="brand-dot">.</span></a><button class="icon-button sidebar-close" data-action="nav" aria-label="サイドバーを閉じる">${icon("close")}</button><div class="workspace"><span class="workspace-avatar">M</span><div><strong>マイワークスペース</strong><small>自分らしく、進めよう</small></div><span class="workspace-chevron">${icon("down")}</span></div><p class="nav-label">ワークスペース</p><button class="nav-item ${!archiveMode ? "active" : ""}" data-action="home">${icon("grid")}<span>すべてのタスク</span><span class="nav-count">${all.length}</span></button><button class="nav-item ${archiveMode ? "active" : ""}" data-action="archive">${icon("archive")}<span>アーカイブ</span><span class="nav-count">${activeTasks(state, { includeArchived: true }).filter((t) => t.archived).length}</span></button><div class="sidebar-bottom"><div class="little-note"><span>${icon("sun")}</span><strong>小さな一歩が、大きな前進。</strong><p>今日の「できた」を増やそう。</p><div class="note-art"><i></i><i></i><i></i></div></div><button class="nav-item" data-action="settings">${icon("settings")}<span>設定・データ同期</span></button><div class="profile"><span class="profile-avatar">M</span><div><strong>マイアカウント</strong><small>${getAuth() ? "クラウド同期が有効" : "ローカルワークスペース"}</small></div><span class="online-dot"></span></div></div></aside><main><header class="topbar"><button class="icon-button sidebar-toggle" data-action="nav" aria-label="メニュー" aria-expanded="${window.matchMedia("(max-width:760px)").matches ? navOpen : !sidebarHidden}" title="サイドバーを開く・閉じる">${icon("menu")}</button><div class="breadcrumb">ワークスペース ${icon("chevron")} <span>${esc(title)}</span></div><div class="top-actions"><span class="connection"><span class="online-dot"></span><span data-connection>${connectionText()}</span></span><button class="icon-button" data-action="settings" aria-label="同期と設定">${icon("cloud")}</button><span class="top-avatar">M</span></div></header><div class="content"><div class="page-heading"><div><div class="eyebrow">YOUR SPACE, YOUR PACE</div><div class="project-title-line"><h1>${esc(title)}<span class="heading-dot" style="--dot:#4d8b78"></span></h1></div><p>今日やることも、これからの計画も。ここから始めよう。</p></div>${archiveMode ? `<span class="archive-heading-note">完了したタスクを保管しています</span>` : `<button class="button primary new-task" data-action="new">${icon("plus")}タスクを追加</button>`}</div><div class="stats"><div class="stat"><span class="stat-icon total">${icon("list")}</span><div><span>すべてのタスク</span><strong>${list.length}<small>件</small></strong></div><div class="mini-bars"><i></i><i></i><i></i><i></i><i></i></div></div><div class="stat"><span class="stat-icon progress">${icon("clock")}</span><div><span>進行中</span><strong>${list.filter((t) => t.status === "doing").length}<small>件</small></strong></div><span class="stat-note">少しずつ前へ</span></div><div class="stat"><span class="stat-icon complete">${icon("check")}</span><div><span>完了</span><strong>${done}<small>件</small></strong></div><span class="completion-ring" style="--progress:${list.length ? (done / list.length) * 100 : 0}%"><span>${list.length ? Math.round((done / list.length) * 100) : 0}%</span></span></div><div class="stat"><span class="stat-icon deadline">${icon("calendar")}</span><div><span>期限超過</span><strong>${overdue}<small>件</small></strong></div><span class="stat-note">${overdue ? "日程を見直そう" : "順調なペースです"}</span></div></div>${retainedVisibilityControl()}<div class="view-toolbar">${archiveMode ? '<div class="archive-filter-label">保管済みタスク</div>' : `<div class="view-tabs" role="tablist" aria-label="表示形式"><button role="tab" aria-selected="${view === "board"}" class="${view === "board" ? "selected" : ""}" data-view="board">${icon("board")}かんばん</button><button role="tab" aria-selected="${view === "gantt"}" class="${view === "gantt" ? "selected" : ""}" data-view="gantt">${icon("gantt")}ガントチャート</button><button role="tab" aria-selected="${view === "calendar"}" class="${view === "calendar" ? "selected" : ""}" data-view="calendar">${icon("calendar")}カレンダー</button></div>`}<div class="toolbar-right"><label class="search-box">${icon("search")}<input id="search" placeholder="タスクを検索…" aria-label="タスクを検索" value="${esc(search)}"><kbd>/</kbd></label><label class="filter-select"><span class="sr-only">状態で絞り込み</span><select id="status-filter"><option value="">すべての状態</option>${STATUSES.map((s) => `<option value="${s.id}" ${s.id === statusFilter ? "selected" : ""}>${esc(statusLabel(s.id))}</option>`).join("")}</select>${icon("down")}</label></div></div><div class="tag-toolbar"><div class="tag-filters">${icon("tag")}<button class="tag-filter ${!tag ? "selected" : ""}" data-tag="">すべて</button>${tags.map((t) => `<button class="tag-filter ${tag === t ? "selected" : ""}" data-tag="${esc(t)}">${esc(t)}</button>`).join("")}</div><span class="result-count">${list.length} 件のタスク</span></div>${archiveMode ? archiveList(list) : view === "board" ? board(list) : view === "gantt" ? gantt(list) : calendar(list)}${!archiveMode ? '<p class="deadline-legend"><span class="deadline-key soon"></span>期限まで3日以内 <span class="deadline-key overdue"></span>期限超過</p>' : ""}<footer class="page-footer"><span>${icon("check")}変更はこの端末に自動保存されます</span><span class="app-version" data-app-version>Taskly v${APP_VERSION}</span></footer></div></main></div>`;
+  app.innerHTML = `<div class="layout ${navOpen ? "nav-open" : ""} ${sidebarHidden ? "sidebar-hidden" : ""}"><button class="nav-shade" data-action="nav" aria-label="メニューを閉じる"></button><aside class="sidebar" ${window.matchMedia("(max-width:760px)").matches ? (!navOpen ? "inert" : "") : sidebarHidden ? "inert" : ""}><a href="#" class="brand" data-action="home"><span class="brand-mark">${icon("leaf")}</span>taskly<span class="brand-dot">.</span></a><button class="icon-button sidebar-close" data-action="nav" aria-label="サイドバーを閉じる">${icon("close")}</button><div class="workspace"><span class="workspace-avatar">M</span><div><strong>マイワークスペース</strong><small>自分らしく、進めよう</small></div><span class="workspace-chevron">${icon("down")}</span></div><p class="nav-label">ワークスペース</p><button class="nav-item ${!archiveMode ? "active" : ""}" data-action="home">${icon("grid")}<span>すべてのタスク</span><span class="nav-count">${all.length}</span></button><button class="nav-item ${archiveMode ? "active" : ""}" data-action="archive">${icon("archive")}<span>アーカイブ</span><span class="nav-count">${activeTasks(state, { includeArchived: true }).filter((t) => t.archived).length}</span></button><div class="sidebar-bottom"><div class="little-note"><span>${icon("sun")}</span><strong>小さな一歩が、大きな前進。</strong><p>今日の「できた」を増やそう。</p><div class="note-art"><i></i><i></i><i></i></div></div><button class="nav-item" data-action="projects">${icon("grid")}<span>プロジェクト設定</span></button><button class="nav-item" data-action="settings">${icon("settings")}<span>設定・データ同期</span></button><div class="profile"><span class="profile-avatar">M</span><div><strong>マイアカウント</strong><small>${getAuth() ? "クラウド同期が有効" : "ローカルワークスペース"}</small></div><span class="online-dot"></span></div></div></aside><main><header class="topbar"><button class="icon-button sidebar-toggle" data-action="nav" aria-label="メニュー" aria-expanded="${window.matchMedia("(max-width:760px)").matches ? navOpen : !sidebarHidden}" title="サイドバーを開く・閉じる">${icon("menu")}</button><div class="breadcrumb">ワークスペース ${icon("chevron")} <span>${esc(title)}</span></div><div class="top-actions"><span class="connection"><span class="online-dot"></span><span data-connection>${connectionText()}</span></span><button class="icon-button" data-action="settings" aria-label="同期と設定">${icon("cloud")}</button><span class="top-avatar">M</span></div></header><div class="content"><div class="page-heading"><div><div class="eyebrow">YOUR SPACE, YOUR PACE</div><div class="project-title-line"><h1>${esc(title)}<span class="heading-dot" style="--dot:#4d8b78"></span></h1></div><p>今日やることも、これからの計画も。ここから始めよう。</p></div>${archiveMode ? `<span class="archive-heading-note">完了したタスクを保管しています</span>` : `<button class="button primary new-task" data-action="new">${icon("plus")}タスクを追加</button>`}</div><div class="stats"><div class="stat"><span class="stat-icon total">${icon("list")}</span><div><span>すべてのタスク</span><strong>${list.length}<small>件</small></strong></div><div class="mini-bars"><i></i><i></i><i></i><i></i><i></i></div></div><div class="stat"><span class="stat-icon progress">${icon("clock")}</span><div><span>進行中</span><strong>${list.filter((t) => t.status === "doing").length}<small>件</small></strong></div><span class="stat-note">少しずつ前へ</span></div><div class="stat"><span class="stat-icon complete">${icon("check")}</span><div><span>完了</span><strong>${done}<small>件</small></strong></div><span class="completion-ring" style="--progress:${list.length ? (done / list.length) * 100 : 0}%"><span>${list.length ? Math.round((done / list.length) * 100) : 0}%</span></span></div><div class="stat"><span class="stat-icon deadline">${icon("calendar")}</span><div><span>期限超過</span><strong>${overdue}<small>件</small></strong></div><span class="stat-note">${overdue ? "日程を見直そう" : "順調なペースです"}</span></div></div>${retainedVisibilityControl()}<div class="view-toolbar">${archiveMode ? '<div class="archive-filter-label">保管済みタスク</div>' : `<div class="view-tabs" role="tablist" aria-label="表示形式"><button role="tab" aria-selected="${view === "board"}" class="${view === "board" ? "selected" : ""}" data-view="board">${icon("board")}かんばん</button><button role="tab" aria-selected="${view === "gantt"}" class="${view === "gantt" ? "selected" : ""}" data-view="gantt">${icon("gantt")}ガントチャート</button><button role="tab" aria-selected="${view === "calendar"}" class="${view === "calendar" ? "selected" : ""}" data-view="calendar">${icon("calendar")}カレンダー</button></div>`}<div class="toolbar-right"><label class="search-box">${icon("search")}<input id="search" placeholder="タスクを検索…" aria-label="タスクを検索" value="${esc(search)}"><kbd>/</kbd></label><label class="filter-select"><span class="sr-only">状態で絞り込み</span><select id="status-filter"><option value="">すべての状態</option>${STATUSES.map((s) => `<option value="${s.id}" ${s.id === statusFilter ? "selected" : ""}>${esc(statusLabel(s.id))}</option>`).join("")}</select>${icon("down")}</label></div></div><div class="tag-toolbar"><div class="tag-filters">${icon("tag")}<button class="tag-filter ${!tag ? "selected" : ""}" data-tag="">すべて</button>${tags.map((t) => `<button class="tag-filter ${tag === t ? "selected" : ""}" data-tag="${esc(t)}">${esc(t)}</button>`).join("")}</div><label class="compact-field project-filter">プロジェクト<select id="project-filter" aria-label="プロジェクトで絞り込み"><option value="">すべて</option>${projectOptions(projectFilter)}</select></label><span class="result-count">${list.length} 件のタスク</span></div>${archiveMode ? archiveList(list) : view === "board" ? board(list) : view === "gantt" ? gantt(list) : calendar(list)}${!archiveMode ? '<p class="deadline-legend"><span class="deadline-key soon"></span>期限まで3日以内 <span class="deadline-key overdue"></span>期限超過</p>' : ""}<footer class="page-footer"><span>${icon("check")}変更はこの端末に自動保存されます</span><span class="app-version" data-app-version>Taskly v${APP_VERSION}</span></footer></div></main></div>`;
 
   const boardViewport = app.querySelector(".board");
   if (boardViewport) {
@@ -362,18 +372,31 @@ function render() {
 function board(list) {
   return `<div class="board">${STATUSES.map(
     (s) =>
-      `<section class="board-column" data-column="${s.id}" aria-label="${esc(statusLabel(s.id))}"><header class="column-heading"><span class="column-status ${s.id}">${statusIcon(s.id)}</span><h2>${esc(statusLabel(s.id))}</h2><button class="icon-button column-rename" data-rename-column="${s.id}" aria-label="${esc(statusLabel(s.id))}の列名を変更">${icon("edit")}</button><span class="column-count">${list.filter((t) => t.status === s.id).length}</span><button class="icon-button" data-add-status="${s.id}" aria-label="${esc(statusLabel(s.id))}のタスクを追加">${icon("plus")}</button></header><div class="column-cards">${list
-        .filter((t) => t.status === s.id)
-        .map(card)
+      `<section class="board-column" data-column="${s.id}" aria-label="${esc(statusLabel(s.id))}"><header class="column-heading"><span class="column-status ${s.id}">${statusIcon(s.id)}</span><h2>${esc(statusLabel(s.id))}</h2><button class="icon-button column-rename" data-rename-column="${s.id}" aria-label="${esc(statusLabel(s.id))}の列名を変更">${icon("edit")}</button><span class="column-count">${list.filter((t) => t.status === s.id).length}</span><button class="icon-button" data-add-status="${s.id}" aria-label="${esc(statusLabel(s.id))}のタスクを追加">${icon("plus")}</button></header><div class="column-cards">${orderedTasks(
+        list.filter((t) => t.status === s.id),
+      )
+        .map((t, i, items) => card(t, i, items.length))
         .join(
           "",
         )}</div><button class="column-add" data-add-status="${s.id}">${icon("plus")}タスクを追加</button></section>`,
   ).join("")}</div>`;
 }
-function card(t) {
+function taskProject(t) {
+  return state.projects.find((p) => p.id === t.projectId);
+}
+function projectOptions(selected) {
+  return state.projects
+    .map(
+      (p) =>
+        `<option value="${p.id}" ${p.id === selected ? "selected" : ""}>${esc(p.name)}</option>`,
+    )
+    .join("");
+}
+function card(t, index, count) {
   const checked = t.checklist.filter((c) => c.done).length,
-    urgency = deadlineState(t);
-  return `<article class="task-card card-compact ${t.status === "done" ? "is-done" : ""} ${t.archived ? "archived-item" : ""} ${urgency ? "deadline-" + urgency : ""}" data-task="${t.id}" data-archived="${Boolean(t.archived)}" draggable="true" tabindex="0" aria-label="${esc(t.title)}を開く">${t.images.length ? `<div class="card-cover"><img src="${t.images[0].data}" alt="${esc(t.images[0].name)}" draggable="false"></div>` : ""}<div class="card-body"><div class="card-heading"><h3>${esc(t.title)}</h3><button class="status-quick ${t.status}" data-cycle="${t.id}" aria-label="${esc(t.title)}：${esc(statusLabel(t.status))}。次の状態へ変更" title="ワンタッチで状態を変更">${statusIcon(t.status)}</button></div>
+    urgency = deadlineState(t),
+    project = taskProject(t);
+  return `<article class="task-card card-compact ${t.status === "done" ? "is-done" : ""} ${t.archived ? "archived-item" : ""} ${urgency ? "deadline-" + urgency : ""}" data-task="${t.id}" data-project="${project.id}" style="--project-color:${project.color};--project-tint:${project.color}14" data-archived="${Boolean(t.archived)}" draggable="true" tabindex="0" aria-label="${esc(t.title)}を開く">${t.images.length ? `<div class="card-cover"><img src="${t.images[0].data}" alt="${esc(t.images[0].name)}" draggable="false"></div>` : ""}<div class="card-body"><div class="card-project-row"><span class="card-project">${esc(project.name)}</span><div class="card-order-actions" aria-label="タスクの並べ替え"><button class="icon-button" data-move-task="${t.id}" data-move-direction="-1" aria-label="${esc(t.title)}を上へ移動" ${index === 0 ? "disabled" : ""}>${icon("up")}</button><button class="icon-button" data-move-task="${t.id}" data-move-direction="1" aria-label="${esc(t.title)}を下へ移動" ${index === count - 1 ? "disabled" : ""}>${icon("down")}</button></div></div><div class="card-heading"><h3>${esc(t.title)}</h3><button class="status-quick ${t.status}" data-cycle="${t.id}" aria-label="${esc(t.title)}：${esc(statusLabel(t.status))}。次の状態へ変更" title="ワンタッチで状態を変更">${statusIcon(t.status)}</button></div>
  ${
    t.tags.length
      ? `<div class="task-tags">${t.tags
@@ -388,7 +411,7 @@ function card(t) {
      : ""
  }
  ${t.description ? `<p class="card-description">${esc(t.description)}</p>` : ""}<div class="card-compact-progress">${t.checklist.length ? `<span class="check-summary" aria-label="チェックリスト ${checked}/${t.checklist.length}">${icon("list")}${checked}/${t.checklist.length}</span><div class="progress-track"><span style="width:${(checked / t.checklist.length) * 100}%"></span></div>` : ""}${progressBadge(t)}</div>
- <div class="card-footer"><span class="due" title="${deadlineLabel(t)}">${icon("calendar")}${formatDate(t.due)}${urgency ? `<strong class="deadline-label">${deadlineLabel(t)}</strong>` : ""}</span><div class="card-meta">${t.images.length ? `<span>${icon("image")}${t.images.length}</span>` : ""}${t.archived ? '<span class="archive-badge">アーカイブ済み</span>' : ""}</div></div></div></article>`;
+ <div class="card-footer"><span class="due" title="${deadlineLabel(t)}">${icon("calendar")}${t.start ? `${formatDate(t.start)}〜${t.due ? formatDate(t.due) : "期限未設定"}` : formatDate(t.due)}${urgency ? `<strong class="deadline-label">${deadlineLabel(t)}</strong>` : ""}</span><div class="card-meta">${t.images.length ? `<span>${icon("image")}${t.images.length}</span>` : ""}${t.archived ? '<span class="archive-badge">アーカイブ済み</span>' : ""}</div></div></div></article>`;
 }
 function tagColor(t) {
   let n = 0;
@@ -485,7 +508,38 @@ function checklistRibbon(t) {
 function ganttContext(t) {
   return `<div class="gantt-checklist-context"><div class="gantt-context-content">${checklistRibbon(t)}<button data-open="${t.id}" title="${esc(t.title)}">${esc(t.title)}</button><span>チェックリストの予定</span></div></div>`;
 }
-function ganttUnscheduled(groups) {
+function ganttScheduled(groups) {
+  const rows = (items) =>
+    items
+      .map(
+        (g) =>
+          (g.own ? ganttRow(g.task) : ganttContext(g.task)) +
+          `<div class="gantt-checklist-group" id="gantt-children-${g.task.id}">${g.checks.map((c) => ganttRow(g.task, c)).join("")}</div>`,
+      )
+      .join("");
+  if (ganttGrouping !== "project") return rows(groups);
+  return state.projects
+    .map((p) => {
+      const items = groups.filter((g) => g.task.projectId === p.id);
+      return items.length
+        ? `<div class="gantt-title gantt-project-heading" data-gantt-project="${p.id}" style="--project-color:${p.color};--project-tint:${p.color}14"><span class="project-dot"></span><strong>${esc(p.name)}</strong><span>${items.length}件</span></div><div class="gantt-project-band" style="background:${p.color}14"></div>${rows(items)}`
+        : "";
+    })
+    .join("");
+}
+function ganttUnscheduled(groups, grouped = false) {
+  if (ganttGrouping === "project" && !grouped) {
+    return groups.length
+      ? `<section class="gantt-unscheduled-by-project"><h3>期間未設定</h3>${state.projects
+          .map((p) => {
+            const items = groups.filter((g) => g.task.projectId === p.id);
+            return items.length
+              ? `<div class="gantt-undated-project" data-undated-project="${p.id}"><h4><span class="project-dot" style="background:${p.color}"></span>${esc(p.name)}</h4>${ganttUnscheduled(items, true)}</div>`
+              : "";
+          })
+          .join("")}</section>`
+      : "";
+  }
   if (!groups.length) return "";
   const count = groups.reduce(
     (n, g) => n + (g.own ? 1 : 0) + g.checks.length,
@@ -499,7 +553,7 @@ function ganttUnscheduled(groups) {
     .join("")}</section>`;
 }
 function gantt(list) {
-  const plan = ganttPlan(list, checklistExpanded),
+  const plan = ganttPlan(orderedTasks(list), checklistExpanded),
     pendingTasks = list.filter((t) => t.checklist.some((c) => !c.done)),
     allExpanded =
       pendingTasks.length > 0 &&
@@ -515,10 +569,10 @@ function gantt(list) {
   }
   return `<section class="gantt-section" style="--day-width:${width}px;--timeline-width:${w.columns.length * width}px" data-unit="${ganttUnit}" data-range-start="${w.start}" data-range-end="${w.end}">
  <div class="gantt-tools"><div class="timeline-navigation"><button class="icon-button back" data-gantt-step="-1" aria-label="前の期間">${icon("chevron")}</button><strong class="gantt-visible-period"></strong><button class="icon-button" data-gantt-step="1" aria-label="次の期間">${icon("chevron")}</button><button class="button small" data-action="today">今日</button></div>
- <div class="gantt-controls"><button class="button small" id="toggle-all-checklists" aria-label="すべてのチェックリストを${allExpanded ? "非表示" : "表示"}" ${pendingTasks.length ? "" : "disabled"} data-show-checklists="${!allExpanded}">${icon("list")}${allExpanded ? "チェックリストを一括で閉じる" : "チェックリストを一括で開く"}</button><label class="compact-field">表示単位<select id="gantt-unit" aria-label="ガントの表示単位"><option value="day" ${ganttUnit === "day" ? "selected" : ""}>日ごと</option><option value="week" ${ganttUnit === "week" ? "selected" : ""}>週ごと</option></select></label><label class="gantt-width">列幅<input type="range" id="day-width" aria-label="ガントの列幅" min="${ganttUnit === "week" ? 56 : 24}" max="${ganttUnit === "week" ? 140 : 80}" step="4" value="${width}"><output id="day-width-value">${width}px</output></label></div></div>
+ <div class="gantt-controls"><label class="compact-field">グループ<select id="gantt-grouping" aria-label="ガントのグループ"><option value="none" ${ganttGrouping === "none" ? "selected" : ""}>まとめて表示</option><option value="project" ${ganttGrouping === "project" ? "selected" : ""}>プロジェクト別</option></select></label><button class="button small" id="toggle-all-checklists" aria-label="すべてのチェックリストを${allExpanded ? "非表示" : "表示"}" ${pendingTasks.length ? "" : "disabled"} data-show-checklists="${!allExpanded}">${icon("list")}${allExpanded ? "チェックリストを一括で閉じる" : "チェックリストを一括で開く"}</button><label class="compact-field">表示単位<select id="gantt-unit" aria-label="ガントの表示単位"><option value="day" ${ganttUnit === "day" ? "selected" : ""}>日ごと</option><option value="week" ${ganttUnit === "week" ? "selected" : ""}>週ごと</option></select></label><label class="gantt-width">列幅<input type="range" id="day-width" aria-label="ガントの列幅" min="${ganttUnit === "week" ? 56 : 24}" max="${ganttUnit === "week" ? 140 : 80}" step="4" value="${width}"><output id="day-width-value">${width}px</output></label></div></div>
  <p class="resize-feedback" role="status">横スクロールで前後の日付へ移動。帯の両端で期間、行の選択欄でステータスを変更できます。</p>
  <div class="gantt-scroll"><div class="gantt-grid"><div class="gantt-title gantt-corner">タスク / チェックリスト</div><div class="gantt-dates"><div class="gantt-months">${groups.map((g) => `<div style="width:${g.count * width}px" data-column-count="${g.count}"><span>${g.key.replace("-", "年")}月</span></div>`).join("")}</div><div class="gantt-date-cells">${w.columns.map((d) => `<div class="gantt-day ${dateKey() >= d && dateKey() <= addDays(d, w.daysPerColumn - 1) ? "today" : ""}">${ganttUnit === "week" ? `<strong>${formatDate(d)}</strong><small>〜${formatDate(addDays(d, 6))}</small>` : `<small>${["日", "月", "火", "水", "木", "金", "土"][new Date(d + "T12:00:00").getDay()]}</small><strong>${Number(d.slice(8))}</strong>`}</div>`).join("")}</div></div>
- ${plan.scheduled.map((g) => (g.own ? ganttRow(g.task) : ganttContext(g.task)) + `<div class="gantt-checklist-group" id="gantt-children-${g.task.id}">${g.checks.map((c) => ganttRow(g.task, c)).join("")}</div>`).join("")}${!plan.scheduled.length ? '<div class="gantt-empty">期間が設定された項目はありません。</div>' : ""}</div></div>${ganttUnscheduled(plan.unscheduled)}</section>`;
+ ${ganttScheduled(plan.scheduled)}${!plan.scheduled.length ? '<div class="gantt-empty">期間が設定された項目はありません。</div>' : ""}</div></div>${ganttUnscheduled(plan.unscheduled)}</section>`;
 }
 function updateTimelineLabel(scroller) {
   const first = dateAtOffset(timeline(), scroller.scrollLeft, columnWidth()),
@@ -601,6 +655,13 @@ function archiveList(list) {
   return `<section class="archive-list"><h2>${icon("archive")}アーカイブしたタスク <span>${list.length}件</span></h2>${list.map((t) => `<div class="archive-row"><button class="archive-task-name" data-open="${t.id}">${icon("check")}<span>${esc(t.title)}<small>${formatDate(t.due)}</small></span></button>${progressBadge(t)}<button class="button small" data-restore-task="${t.id}">再開する</button></div>`).join("") || '<p class="empty-message">まだアーカイブはありません。タスクを完了すると自動で保管されます。</p>'}</section>`;
 }
 function bindSchedule() {
+  const grouping = app.querySelector("#gantt-grouping");
+  if (grouping)
+    grouping.onchange = () => {
+      ganttGrouping = grouping.value;
+      localStorage.setItem("taskly-gantt-grouping", ganttGrouping);
+      render();
+    };
   app.querySelectorAll("[data-toggle-checklist]").forEach(
     (b) =>
       (b.onclick = () => {
@@ -889,6 +950,7 @@ function bind() {
         const a = b.dataset.action;
         if (a === "new") openTask();
         if (a === "settings") settings();
+        if (a === "projects") manageProjects();
         if (a === "toggle-retained") {
           if (archiveMode) {
             includeArchived = true;
@@ -897,6 +959,7 @@ function bind() {
             search = "";
             tag = "";
             statusFilter = "";
+            projectFilter = "";
           } else includeArchived = !includeArchived;
           localStorage.setItem(
             "taskly-include-archived",
@@ -908,6 +971,7 @@ function bind() {
           archiveMode = true;
           tag = "";
           statusFilter = "";
+          projectFilter = "";
           navOpen = false;
           render();
         }
@@ -962,6 +1026,30 @@ function bind() {
         changeStatus(t.id, next.id);
       }),
   );
+  app.querySelectorAll("[data-move-task]").forEach((b) => {
+    b.onclick = (e) => {
+      e.stopPropagation();
+      const t = state.tasks.find((t) => t.id === b.dataset.moveTask);
+      const visible = orderedTasks(
+        tasks().filter((x) => x.status === t.status),
+      );
+      const i = visible.findIndex((x) => x.id === t.id);
+      const direction = Number(b.dataset.moveDirection);
+      if (i + direction < 0 || i + direction >= visible.length) return;
+      const before =
+        direction < 0 ? visible[i - 1].id : visible[i + 2]?.id || null;
+      mutate((s) => moveTask(s, t.id, t.status, before))
+        .then(() => {
+          const control = app.querySelector(
+            `[data-move-task="${t.id}"][data-move-direction="${direction}"]`,
+          );
+          if (control && !control.disabled)
+            control.focus({ preventScroll: true });
+          toast("順番を変更しました");
+        })
+        .catch(() => {});
+    };
+  });
   app.querySelectorAll("[data-task]").forEach((el) => {
     el.onclick = () => openTask(el.dataset.task);
     el.onkeydown = (e) => {
@@ -969,6 +1057,16 @@ function bind() {
         e.preventDefault();
         openTask(el.dataset.task);
       }
+    };
+    el.ondragend = () => {
+      boardPointerActive = false;
+      boardTouchActive = false;
+      app
+        .querySelectorAll(".drop-before,.drop-after,.drag-over")
+        .forEach((x) =>
+          x.classList.remove("drop-before", "drop-after", "drag-over"),
+        );
+      settleBoard();
     };
     el.ondragstart = (e) => {
       e.dataTransfer.setData("text/plain", el.dataset.task);
@@ -986,18 +1084,57 @@ function bind() {
     col.ondragover = (e) => {
       e.preventDefault();
       col.classList.add("drag-over");
+      app
+        .querySelectorAll(".drop-before,.drop-after")
+        .forEach((x) => x.classList.remove("drop-before", "drop-after"));
+      const card = e.target.closest("[data-task]");
+      if (card)
+        card.classList.add(
+          e.clientY < card.getBoundingClientRect().top + card.offsetHeight / 2
+            ? "drop-before"
+            : "drop-after",
+        );
     };
     col.ondragleave = (e) => {
-      if (!col.contains(e.relatedTarget)) col.classList.remove("drag-over");
+      if (!col.contains(e.relatedTarget)) {
+        col.classList.remove("drag-over");
+        col
+          .querySelectorAll(".drop-before,.drop-after")
+          .forEach((x) => x.classList.remove("drop-before", "drop-after"));
+      }
     };
     col.ondrop = (e) => {
       e.preventDefault();
       col.classList.remove("drag-over");
       const id = e.dataTransfer.getData("text/plain");
-      if (state.tasks.some((t) => t.id === id && !t.deleted))
-        changeStatus(id, col.dataset.column);
+      const target = e.target.closest("[data-task]");
+      app
+        .querySelectorAll(".drop-before,.drop-after")
+        .forEach((x) => x.classList.remove("drop-before", "drop-after"));
+      if (target?.dataset.task === id) return;
+      let before = null;
+      if (target) {
+        const items = orderedTasks(
+          state.tasks.filter(
+            (t) => !t.deleted && t.status === col.dataset.column && t.id !== id,
+          ),
+        );
+        const i = items.findIndex((t) => t.id === target.dataset.task);
+        before =
+          e.clientY <
+          target.getBoundingClientRect().top + target.offsetHeight / 2
+            ? target.dataset.task
+            : items[i + 1]?.id || null;
+      }
+      mutate((s) => moveTask(s, id, col.dataset.column, before)).catch(
+        () => {},
+      );
     };
   });
+  app.querySelector("#project-filter").onchange = (e) => {
+    projectFilter = e.target.value;
+    render();
+  };
   const input = app.querySelector("#search");
   input.oninput = () => {
     const pos = input.selectionStart;
@@ -1014,10 +1151,7 @@ function bind() {
 }
 function changeStatus(id, status) {
   mutate((s) => {
-    const t = s.tasks.find((t) => t.id === id);
-    t.status = status;
-    if (status !== "done") t.archived = false;
-    t.updatedAt = Math.max(Date.now(), t.updatedAt + 1);
+    moveTask(s, id, status);
   })
     .then(() =>
       toast(
@@ -1080,7 +1214,7 @@ modal.addEventListener("click", (e) => {
 function openTask(id, status = "todo", date = "", focusCheck = "") {
   const t = id
     ? state.tasks.find((t) => t.id === id)
-    : newTask(state.projects[0].id);
+    : newTask(projectFilter || state.projects[0].id);
   draft = structuredClone(t);
   if (!id) {
     draft.status = status;
@@ -1091,7 +1225,7 @@ function openTask(id, status = "todo", date = "", focusCheck = "") {
   }
   dirty = false;
   showModal(
-    `<form id="task-form"><header class="drawer-header"><span>${icon("list")}${id ? "タスクの詳細" : "新しいタスク"}</span><button type="button" class="icon-button" id="close-modal" aria-label="閉じる">${icon("close")}</button></header><div class="drawer-body"><label class="sr-only" for="task-title">タスク名</label><input id="task-title" class="title-input" placeholder="タスク名" maxlength="200" required value="${esc(draft.title)}"><div class="field"><label>ステータス <span>完了すると自動アーカイブ</span></label><div class="status-options">${STATUSES.map((s) => `<button type="button" data-status="${s.id}" class="status-option ${s.id === draft.status ? "selected" : ""} ${s.id}">${statusIcon(s.id)}${esc(statusLabel(s.id))}</button>`).join("")}</div></div><label class="field">進行度<select id="task-progress">${PROGRESS.map((p) => `<option value="${p.id}" ${draft.progress === p.id ? "selected" : ""}>${p.label}</option>`).join("")}</select></label><div class="date-fields"><label class="field">開始日<input type="date" id="task-start" value="${draft.start}" max="9999-12-31"></label><label class="field">期限日<input type="date" id="task-due" value="${draft.due}" max="9999-12-31"></label></div><div class="field"><label for="tag-input">タグ <span>複数追加できます</span></label><div id="draft-tags" class="draft-tags"></div><div class="inline-add"><input id="tag-input" placeholder="タグを入力して Enter" maxlength="30" list="existing-tags"><button type="button" class="button small" id="add-tag">追加</button></div><datalist id="existing-tags">${[...new Set(activeTasks(state).flatMap((t) => t.tags))].map((t) => `<option value="${esc(t)}">`).join("")}</datalist></div><label class="field">メモ<textarea id="task-description" placeholder="補足を入力" maxlength="20000" rows="3">${esc(draft.description)}</textarea></label><div class="field"><label class="section-label">${icon("list")}チェックリスト <span id="check-count"></span></label><div id="draft-checklist"></div><div class="inline-add"><input id="check-input" placeholder="チェック項目を追加…" maxlength="300"><button type="button" class="icon-button bordered" id="add-check" aria-label="チェック項目を追加">${icon("plus")}</button></div></div><div class="field"><label class="section-label">${icon("image")}添付画像 <span>最大8枚・各10MBまで</span></label><div id="draft-images"></div><label class="upload-area">${icon("image")}<strong>画像を選択して添付</strong><span>JPEG・PNG・WebP / 自動で圧縮します</span><input type="file" id="image-input" accept="image/jpeg,image/png,image/webp" multiple></label></div><p id="form-error" class="form-error" role="alert"></p></div><footer class="drawer-footer">${id ? `<button type="button" class="icon-button danger" id="delete-task" aria-label="タスクを削除">${icon("trash")}</button>` : ""}${id && draft.archived ? `<button type="button" class="icon-button" id="archive-task" aria-label="タスクを再開" title="未着手に戻して再開">${icon("arrow")}</button>` : ""}<span class="save-hint">${id ? "変更後は保存してください" : ""}</span><button type="button" class="button" id="cancel-task">キャンセル</button><button type="submit" class="button primary" id="save-task">${id ? "変更を保存" : "タスクを作成"}</button></footer></form>`,
+    `<form id="task-form"><header class="drawer-header"><span>${icon("list")}${id ? "タスクの詳細" : "新しいタスク"}</span><button type="button" class="icon-button" id="close-modal" aria-label="閉じる">${icon("close")}</button></header><div class="drawer-body"><label class="sr-only" for="task-title">タスク名</label><input id="task-title" class="title-input" placeholder="タスク名" maxlength="200" required value="${esc(draft.title)}"><div class="field"><label>ステータス <span>完了すると自動アーカイブ</span></label><div class="status-options">${STATUSES.map((s) => `<button type="button" data-status="${s.id}" class="status-option ${s.id === draft.status ? "selected" : ""} ${s.id}">${statusIcon(s.id)}${esc(statusLabel(s.id))}</button>`).join("")}</div></div><label class="field">プロジェクト<select id="task-project">${projectOptions(draft.projectId)}</select></label><details class="inline-project-create"><summary>新しいプロジェクトを追加</summary><label class="field">新しいプロジェクト名<input id="new-project-name" maxlength="100" placeholder="例：仕事・旅行"></label><label class="field">プロジェクトの色<input type="color" id="new-project-color" value="${COLORS[state.projects.length % COLORS.length]}"></label><p class="fine-print">タスクの保存と一緒に作成します。名前や色は「プロジェクト設定」で変更できます。</p></details><label class="field">進行度<select id="task-progress">${PROGRESS.map((p) => `<option value="${p.id}" ${draft.progress === p.id ? "selected" : ""}>${p.label}</option>`).join("")}</select></label><div class="date-fields"><label class="field">開始日<input type="date" id="task-start" value="${draft.start}" max="9999-12-31"></label><label class="field">期限日<input type="date" id="task-due" value="${draft.due}" max="9999-12-31"></label></div><div class="field"><label for="tag-input">タグ <span>複数追加できます</span></label><div id="draft-tags" class="draft-tags"></div><div class="inline-add"><input id="tag-input" placeholder="タグを入力して Enter" maxlength="30" list="existing-tags"><button type="button" class="button small" id="add-tag">追加</button></div><datalist id="existing-tags">${[...new Set(activeTasks(state).flatMap((t) => t.tags))].map((t) => `<option value="${esc(t)}">`).join("")}</datalist></div><label class="field">メモ<textarea id="task-description" placeholder="補足を入力" maxlength="20000" rows="3">${esc(draft.description)}</textarea></label><div class="field"><label class="section-label">${icon("list")}チェックリスト <span id="check-count"></span></label><div id="draft-checklist"></div><div class="inline-add"><input id="check-input" placeholder="チェック項目を追加…" maxlength="300"><button type="button" class="icon-button bordered" id="add-check" aria-label="チェック項目を追加">${icon("plus")}</button></div></div><div class="field"><label class="section-label">${icon("image")}添付画像 <span>最大8枚・各10MBまで</span></label><div id="draft-images"></div><label class="upload-area">${icon("image")}<strong>画像を選択して添付</strong><span>JPEG・PNG・WebP / 自動で圧縮します</span><input type="file" id="image-input" accept="image/jpeg,image/png,image/webp" multiple></label></div><p id="form-error" class="form-error" role="alert"></p></div><footer class="drawer-footer">${id ? `<button type="button" class="icon-button danger" id="delete-task" aria-label="タスクを削除">${icon("trash")}</button>` : ""}${id && draft.archived ? `<button type="button" class="icon-button" id="archive-task" aria-label="タスクを再開" title="未着手に戻して再開">${icon("arrow")}</button>` : ""}<span class="save-hint">${id ? "変更後は保存してください" : ""}</span><button type="button" class="button" id="cancel-task">キャンセル</button><button type="submit" class="button primary" id="save-task">${id ? "変更を保存" : "タスクを作成"}</button></footer></form>`,
     "task-drawer",
   );
   const form = modal.querySelector("form");
@@ -1178,6 +1312,7 @@ function openTask(id, status = "todo", date = "", focusCheck = "") {
     draft.title = modal.querySelector("#task-title").value.trim();
     draft.description = modal.querySelector("#task-description").value;
     draft.progress = modal.querySelector("#task-progress").value;
+    draft.projectId = modal.querySelector("#task-project").value;
     if (draft.status !== "done") draft.archived = false;
     draft.start = modal.querySelector("#task-start").value;
     draft.due = modal.querySelector("#task-due").value;
@@ -1197,12 +1332,27 @@ function openTask(id, status = "todo", date = "", focusCheck = "") {
       error.textContent = `チェック項目「${invalidCheck.text}」の期限日は開始日以降にしてください。`;
       return;
     }
+    const projectName = modal.querySelector("#new-project-name").value.trim();
+    if (projectName && state.projects.length >= 200) {
+      error.textContent = "プロジェクトは200個までです。";
+      return;
+    }
+    const project = projectName
+      ? {
+          id: uid(),
+          name: projectName,
+          color: modal.querySelector("#new-project-color").value,
+          updatedAt: Date.now(),
+        }
+      : null;
+    if (project) draft.projectId = project.id;
     draft.updatedAt = Math.max(Date.now(), draft.updatedAt + 1);
     const value = structuredClone(draft);
     saving = true;
     modal.querySelector("#save-task").disabled = true;
     try {
       await mutate((s) => {
+        if (project) s.projects.push(project);
         const i = s.tasks.findIndex((t) => t.id === value.id);
         if (i >= 0) s.tasks[i] = value;
         else s.tasks.unshift(value);
@@ -1362,6 +1512,68 @@ async function compressImage(file) {
   if (data.length > 2500000)
     throw Error("画像をさらに縮小してお試しください。");
   return { id: uid(), name: file.name.slice(0, 200), data };
+}
+function manageProjects() {
+  navOpen = false;
+  render();
+  const projects = structuredClone(state.projects);
+  draft = null;
+  dirty = false;
+  showModal(
+    `<form id="projects-form" class="simple-modal projects-modal"><header><h2>プロジェクト設定</h2><button type="button" class="icon-button" data-close aria-label="閉じる">${icon("close")}</button></header><div class="projects-scroll"><p>名前と色を設定します。カードの色とガントのグループに反映されます。</p>${projects.map((p) => `<div class="project-edit-row" data-project-edit="${p.id}"><label class="field">プロジェクト名<input data-project-name="${p.id}" aria-label="${esc(p.name)}のプロジェクト名" maxlength="100" required value="${esc(p.name)}"></label><label class="field">色<input type="color" data-project-color="${p.id}" aria-label="${esc(p.name)}の色" value="${p.color}"></label></div>`).join("")}<h3>新しいプロジェクト</h3><div class="project-edit-row"><label class="field">新しいプロジェクト名<input id="project-name" maxlength="100" placeholder="例：仕事・旅行"></label><label class="field">色<input type="color" id="project-color" aria-label="新しいプロジェクトの色" value="${COLORS[projects.length % COLORS.length]}"></label></div><p id="project-error" class="form-error" role="alert"></p></div><footer class="project-manager-footer"><button class="button primary" type="submit">プロジェクトを保存</button></footer></form>`,
+    "center-modal",
+  );
+  const form = modal.querySelector("form");
+  form.oninput = () => (dirty = true);
+  modal.querySelector("[data-close]").onclick = tryClose;
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    if (saving) return;
+    const updates = projects
+      .map((p) => ({
+        id: p.id,
+        name: modal.querySelector(`[data-project-name="${p.id}"]`).value.trim(),
+        color: modal.querySelector(`[data-project-color="${p.id}"]`).value,
+      }))
+      .filter((value) => {
+        const original = projects.find((p) => p.id === value.id);
+        return original.name !== value.name || original.color !== value.color;
+      });
+    const name = modal.querySelector("#project-name").value.trim();
+    const color = modal.querySelector("#project-color").value;
+    const error = modal.querySelector("#project-error");
+    if (updates.some((p) => !p.name)) {
+      error.textContent = "プロジェクト名を入力してください。";
+      return;
+    }
+    if (name && state.projects.length >= 200) {
+      error.textContent = "プロジェクトは200個までです。";
+      return;
+    }
+    const button = form.querySelector('[type="submit"]');
+    button.disabled = true;
+    saving = true;
+    try {
+      await mutate((s) => {
+        for (const value of updates) {
+          const p = s.projects.find((p) => p.id === value.id);
+          if (p.name !== value.name || p.color !== value.color)
+            Object.assign(p, value, {
+              updatedAt: Math.max(Date.now(), p.updatedAt + 1),
+            });
+        }
+        if (name)
+          s.projects.push({ id: uid(), name, color, updatedAt: Date.now() });
+      });
+      closeModal();
+      toast("プロジェクトを保存しました");
+    } catch (e) {
+      error.textContent = e.message;
+      button.disabled = false;
+    } finally {
+      saving = false;
+    }
+  };
 }
 function settings() {
   const config = getConfig(),
